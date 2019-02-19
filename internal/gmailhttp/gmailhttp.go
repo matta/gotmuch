@@ -13,23 +13,34 @@ The required API Key, required by Google's corporate GMail setup,
 is hard coded in the source.  TODO: don't do that.  ;-)
 
 Note: this program cannot use the Go API provided by
-https://github.com/google/oauth2l for two primary:
+https://github.com/google/oauth2l for three primary reasons:
+
+1) no support for SSO auth from the oauth2l Go API.  Support is there
+   only from the package's command line "oauth2l" program.
 
 1) no direct support for using OAuth2.0 with API Keys.  If an API Key
    is set in the oauth2l.Config the code attempts a non-OAuth
    authentication method.
 
 2) no support for refreshing tokens on expiry.  The http.Client
-   returned by the library never refreshes tokens.
+   returned by the library never refreshes tokens, which is broken for
+   long lived clients (and possibly short lived dones too, if the
+   token happens to have an expire time in the near future).
 
 BUGS:
 
-This code hard codes token expiry at one hour, since the API supported
-by the oauth2l SSO program does not provide the tokens' expire time.
-It isn't clear that the golang.org/x/oauth2 approach to token expiry,
-the oauth2.Valid() method, encourages well designed software anyway,
-since OAuth 2.0 clients should be designed to handle expired token
-responses from the server at any time.
+This package code hard codes a tokens' expire time at one hour, since
+the API supported by the oauth2l SSO program does not provide the
+tokens' actual expire time.  It isn't clear that the
+golang.org/x/oauth2 approach to token expiry, the token.Valid()
+method, encourages well designed software anyway.  OAuth 2.0 clients
+should be designed to gracefully handle expired token responses from
+the server at any time.  The client's notion of token expiry should be
+at most an optimization that prevents unecessary network round trips,
+but golang.org/x/oauth2 seems to be designed on the assumption that
+the client has perfect knowledge of when a token will expire (which is
+impossible).
+
 */
 
 package gmailhttp
