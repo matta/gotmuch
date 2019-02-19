@@ -4,15 +4,17 @@ package gmail
 import (
 	"context"
 	"encoding/base64"
+	"log"
 	"net/http"
 
-	"google3/base/go/log"
-	"google3/experimental/users/marmstrong/gotmuch/message"
-	"google3/third_party/golang/errors/errors"
-	"google3/third_party/golang/google_api/gmail/v1/gmail"
-	gmail_api "google3/third_party/golang/google_api/gmail/v1/gmail"
-	"google3/util/time/go/rate"
+	"github.com/matta/gotmuch/internal/message"
+	"github.com/pkg/errors"
+	"golang.org/x/time/rate"
+	"google.golang.org/api/gmail/v1"
+	gmail_api "google.golang.org/api/gmail/v1"
 )
+
+// "google3/util/time/go/rate"
 
 const (
 	ReadonlyScope = gmail_api.GmailReadonlyScope
@@ -49,7 +51,7 @@ func (s *GmailService) ListAll(ctx context.Context, handler func(*message.ID) er
 	total := 0
 	err := req.Pages(ctx, func(page *gmail.ListMessagesResponse) (err error) {
 		total += len(page.Messages)
-		log.Infof("listed page of Gmail messages; count %d; total so far %d", len(page.Messages), total)
+		log.Printf("listed page of Gmail messages; count %d; total so far %d", len(page.Messages), total)
 		for _, msg := range page.Messages {
 			m := &message.ID{PermID: msg.Id, ThreadID: msg.ThreadId}
 			if err := handler(m); err != nil {
@@ -61,7 +63,7 @@ func (s *GmailService) ListAll(ctx context.Context, handler func(*message.ID) er
 		}
 		return
 	})
-	log.Infof("done listing Gmail messages; total %d", total)
+	log.Printf("done listing Gmail messages; total %d", total)
 	if err != nil {
 		err = errors.Wrap(err, "unable to retrieve all messages")
 	}

@@ -5,11 +5,11 @@ import (
 	"database/sql"
 	"fmt"
 
-	"google3/experimental/users/marmstrong/gotmuch/message"
-	"google3/experimental/users/marmstrong/gotmuch/notmuch"
-	"google3/experimental/users/marmstrong/gotmuch/persist"
-	"google3/third_party/golang/errors/errors"
-	"google3/third_party/golang/go_sync/errgroup/errgroup"
+	"github.com/matta/gotmuch/internal/message"
+	"github.com/matta/gotmuch/internal/notmuch"
+	"github.com/matta/gotmuch/internal/persist"
+	"github.com/pkg/errors"
+	"golang.org/x/sync/errgroup"
 )
 
 func handleListedMessage(ctx context.Context, db *sql.DB, g MessageStorage, nm *notmuch.Service, msg *message.ID) error {

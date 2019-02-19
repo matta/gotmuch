@@ -7,7 +7,7 @@ package sync
 import (
 	"context"
 
-	"google3/experimental/users/marmstrong/gotmuch/message"
+	"github.com/matta/gotmuch/internal/message"
 )
 
 // MessageLister lists all message identifiers from a message storage

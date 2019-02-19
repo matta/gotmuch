@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"time"
 
-	"google3/experimental/users/marmstrong/gotmuch/message"
-	"google3/third_party/golang/errors/errors"
+	"github.com/matta/gotmuch/internal/message"
+	"github.com/pkg/errors"
 )
 
 // OpenDB TODO: write me

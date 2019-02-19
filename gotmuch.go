@@ -3,22 +3,22 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 
-	"google3/base/go/flag"
-	"google3/base/go/google"
-	"google3/base/go/log"
-	"google3/experimental/users/marmstrong/gotmuch/gmail"
-	"google3/experimental/users/marmstrong/gotmuch/gmailhttp"
-	"google3/experimental/users/marmstrong/gotmuch/homedir"
-	"google3/experimental/users/marmstrong/gotmuch/notmuch"
-	"google3/experimental/users/marmstrong/gotmuch/persist"
-	"google3/experimental/users/marmstrong/gotmuch/sync"
-	"google3/experimental/users/marmstrong/gotmuch/tracehttp"
-	"google3/third_party/golang/errors/errors"
-	_ "google3/third_party/golang/sqlite3/sqlite3"
+	"github.com/matta/gotmuch/internal/gmail"
+	"github.com/matta/gotmuch/internal/gmailhttp"
+	"github.com/matta/gotmuch/internal/homedir"
+	"github.com/matta/gotmuch/internal/notmuch"
+	"github.com/matta/gotmuch/internal/persist"
+	"github.com/matta/gotmuch/internal/sync"
+	"github.com/matta/gotmuch/internal/tracehttp"
+	"github.com/pkg/errors"
+
+	_ "github.com/mattn/go-sqlite3"
 )
 
 var (
@@ -28,37 +28,40 @@ var (
 func run() error {
 	nm, err := notmuch.New()
 	if err != nil {
-		return errors.Wrap(err, "Unable to initialize notmuch")
+		return errors.Wrap(err, "unable to initialize notmuch")
 	}
 
 	ctx := context.Background()
 	db, err := persist.OpenDB(ctx, filepath.Join(homedir.Get(), ".gotmuch.db"))
 	if err != nil {
-		return errors.Wrap(err, "Unable to initialize database")
+		return errors.Wrap(err, "unable to initialize database")
 	}
 	defer db.Close()
 
-	s, err := gmail.New(gmailhttp.New())
+	http, err := gmailhttp.New(ctx)
 	if err != nil {
-		return errors.Wrap(err, "Unable to initialize GMail")
+		return errors.Wrap(err, "unable to initialize GMail HTTP client")
+	}
+
+	s, err := gmail.New(http)
+	if err != nil {
+		return errors.Wrap(err, "unable to initialize GMail")
 	}
 
 	err = sync.CatchUp(ctx, s, db, nm)
 	if err != nil {
-		return errors.Wrap(err, "Unable to synchronize")
+		return errors.Wrap(err, "unable to synchronize")
 	}
 	return nil
 }
 
 func main() {
-	google.Init()
-
 	if *flagTrace {
 		tracehttp.WrapDefaultTransport()
 	}
 
 	if err := run(); err != nil {
-		log.Exitf("Failed: %v\n", err)
+		log.Fatalf("Failed: %v\n", err)
 	}
 	fmt.Print("Success!\n")
 	os.Exit(0)

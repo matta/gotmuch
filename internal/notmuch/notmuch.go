@@ -3,6 +3,7 @@ package notmuch
 
 import (
 	"context"
+	"errors"
 	"hash/fnv"
 	"io/ioutil"
 	"os"
@@ -10,8 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"google3/experimental/users/marmstrong/gotmuch/message"
-	"google3/third_party/golang/errors/errors"
+	"github.com/matta/gotmuch/internal/message"
 )
 
 const (
