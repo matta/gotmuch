@@ -38,7 +38,7 @@ func run() error {
 	}
 	defer db.Close()
 
-	http, err := gmailhttp.New(ctx)
+	http, err := gmailhttp.New()
 	if err != nil {
 		return errors.Wrap(err, "unable to initialize GMail HTTP client")
 	}
