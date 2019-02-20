@@ -12,14 +12,14 @@ import (
 )
 
 // OpenDB TODO: write me
-func OpenDB(ctx context.Context, path string) (db *sql.DB, err error) {
+func OpenDB(ctx context.Context, path string) (*sql.DB, error) {
 	// The _busy_timeout is a SQLite extension that controls how long SQLite will poll
 	// before giving up.  The default of 5 seconds is too short in practice, especially
 	// in slower debug builds; go with 5 minutes.
 	var busyTimeout = int(5*time.Minute) / int(time.Millisecond)
 	dsn := fmt.Sprintf("file:%s?_busy_timeout=%d", path, busyTimeout)
 	fmt.Println("opening database at", dsn)
-	db, err = sql.Open("sqlite3", dsn)
+	db, err := sql.Open("sqlite3", dsn)
 	if err != nil {
 		return nil, errors.Wrapf(err, "could not open database at %s", dsn)
 	}
@@ -90,7 +90,6 @@ CREATE TABLE IF NOT EXISTS gmail_labels (
 		return nil, errors.Wrap(err, "could not create gmail_labels table")
 	}
 
-	return
 }
 
 // InsertMessageID TODO: write me
