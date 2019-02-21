@@ -8,7 +8,7 @@ import (
 	"math"
 	"time"
 
-	"github.com/matta/gotmuch/internal/message"
+	"marmstrong/gotmuch/internal/message"
 	"github.com/pkg/errors"
 )
 

@@ -11,7 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/matta/gotmuch/internal/message"
+	"marmstrong/gotmuch/internal/message"
 )
 
 const (

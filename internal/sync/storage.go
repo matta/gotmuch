@@ -7,7 +7,7 @@ package sync
 import (
 	"context"
 
-	"github.com/matta/gotmuch/internal/message"
+	"marmstrong/gotmuch/internal/message"
 )
 
 // MessageLister lists all message identifiers from a message storage

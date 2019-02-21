@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/matta/gotmuch/internal/message"
-	"github.com/matta/gotmuch/internal/notmuch"
-	"github.com/matta/gotmuch/internal/persist"
+	"marmstrong/gotmuch/internal/message"
+	"marmstrong/gotmuch/internal/notmuch"
+	"marmstrong/gotmuch/internal/persist"
 	"github.com/pkg/errors"
 	"golang.org/x/sync/errgroup"
 )
