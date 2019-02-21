@@ -44,7 +44,7 @@ func TestBasenameEncode(t *testing.T) {
 		},
 		{
 			name: basename{"竹", "\n\t\a"},
-			want: "gotmuch-1-_E7_AB_B9-_0A_09_07",
+			want: "gotmuch-1-=E7=AB=B9-=0A=09=07",
 		},
 	}
 	for _, tc := range cases {
