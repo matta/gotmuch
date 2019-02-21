@@ -52,7 +52,7 @@ import (
 	"os/user"
 	"time"
 
-	"github.com/matta/gotmuch/internal/gmail"
+	"marmstrong/gotmuch/internal/gmail"
 	"golang.org/x/oauth2"
 	"google.golang.org/api/googleapi/transport"
 )

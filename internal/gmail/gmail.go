@@ -7,7 +7,7 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/matta/gotmuch/internal/message"
+	"marmstrong/gotmuch/internal/message"
 	"github.com/pkg/errors"
 	"golang.org/x/time/rate"
 	"google.golang.org/api/gmail/v1"
