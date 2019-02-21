@@ -5,14 +5,23 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/matta/gotmuch/internal/message"
 	"github.com/pkg/errors"
 )
 
+type DB struct {
+	db *sql.DB
+}
+
+type Tx struct {
+	tx *sql.Tx
+}
+
 // OpenDB TODO: write me
-func OpenDB(ctx context.Context, path string) (*sql.DB, error) {
+func Open(ctx context.Context, path string) (*DB, error) {
 	// The _busy_timeout is a SQLite extension that controls how long SQLite will poll
 	// before giving up.  The default of 5 seconds is too short in practice, especially
 	// in slower debug builds; go with 5 minutes.
@@ -24,6 +33,35 @@ func OpenDB(ctx context.Context, path string) (*sql.DB, error) {
 		return nil, errors.Wrapf(err, "could not open database at %s", dsn)
 	}
 
+	if err = initSchema(ctx, db); err != nil {
+		db.Close()
+		return nil, errors.Wrapf(err, "could not init database schema")
+	}
+
+	return &DB{db}, nil
+}
+
+func (db *DB) Close() {
+	db.db.Close()
+}
+
+func (db *DB) Begin(ctx context.Context) (*Tx, error) {
+	tx, err := db.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, errors.Wrap(err, "begin transaction failed")
+	}
+	return &Tx{tx}, nil
+}
+
+func (tx *Tx) Commit() error {
+	return tx.tx.Commit()
+}
+
+func (tx *Tx) Rollback() error {
+	return tx.tx.Rollback()
+}
+
+func initSchema(ctx context.Context, db *sql.DB) error {
 	// The gmail_messages table holds state for each message in
 	// the database.
 	//
@@ -74,17 +112,14 @@ func OpenDB(ctx context.Context, path string) (*sql.DB, error) {
 	//   considered valid for the message_id for the life of the
 	//   database.
 	sql := `
--- Traks the state of messages in GMail.
 CREATE TABLE IF NOT EXISTS gmail_messages (
 message_id TEXT NOT NULL PRIMARY KEY,
 thread_id TEXT NOT NULL,
-history_id TEXT,
-size_estimate INTEGER,
+history_id INTEGER,
+size_estimate INTEGER
 );`
-	_, err = db.ExecContext(ctx, sql)
-	if err != nil {
-		db.Close()
-		return nil, errors.Wrap(err, "could not create messages table")
+	if _, err := db.ExecContext(ctx, sql); err != nil {
+		return errors.Wrap(err, "could not create gmail_messages table")
 	}
 
 	// The gmail_labels table maps label IDs to display name and
@@ -108,10 +143,8 @@ label_id TEXT NOT NULL PRIMARY KEY,
 display_name TEXT NOT NULL,
 type TEXT NOT NULL
 );`
-	_, err = db.ExecContext(ctx, sql)
-	if err != nil {
-		db.Close()
-		return nil, errors.Wrap(err, "could not create gmail_labels table")
+	if _, err := db.ExecContext(ctx, sql); err != nil {
+		return errors.Wrap(err, "could not create gmail_labels table")
 	}
 
 	// The gmail_message_labels table maps messages to labels.
@@ -132,10 +165,8 @@ label_id TEXT NOT NULL,
 PRIMARY KEY (message_id, label_id)
 FOREIGN KEY (message_id) REFERENCES gmail_messages (message_id)
 );`
-	_, err = db.ExecContext(ctx, sql)
-	if err != nil {
-		db.Close()
-		return nil, errors.Wrap(err, "could not create gmail_labels table")
+	if _, err := db.ExecContext(ctx, sql); err != nil {
+		return errors.Wrap(err, "could not create gmail_message_labels table")
 	}
 
 	// The gmail_history_id table holds the GMail history ID for
@@ -152,55 +183,82 @@ FOREIGN KEY (message_id) REFERENCES gmail_messages (message_id)
 	// Users.messages.list call (catch up synchronization).
 	sql = `
 CREATE TABLE IF NOT EXISTS gmail_history_id (
-history_id TEXT NOT NULL,
+history_id INTEGER NOT NULL,
 PRIMARY KEY (history_id)
 );`
-	_, err = db.ExecContext(ctx, sql)
-	if err != nil {
-		db.Close()
-		return nil, errors.Wrap(err, "could not create gmail_history_id table")
+	if _, err := db.ExecContext(ctx, sql); err != nil {
+		return errors.Wrap(err, "could not create gmail_history_id table")
 	}
 
-	return db, nil
+	return nil
 }
 
 // InsertMessageID TODO: write me
-func InsertMessageID(ctx context.Context, db *sql.DB, msg *message.ID) error {
-	tx, err := db.BeginTx(ctx, nil)
-	if err != nil {
-		return errors.Wrap(err, "db begin transaction failed")
-	}
-	defer tx.Rollback()
-
+func (tx *Tx) InsertMessageID(ctx context.Context, msg *message.ID) error {
 	sql := `INSERT OR REPLACE INTO gmail_messages
 		(message_id, thread_id) values ($1, $2)
 		ON CONFLICT (message_id)
 		DO UPDATE SET (thread_id, history_id) = ($2, NULL)`
-	upsert, err := tx.PrepareContext(ctx, sql)
+	upsert, err := tx.tx.PrepareContext(ctx, sql)
 	if err != nil {
 		return errors.Wrap(err, "db prepare statement failed for messages upsert")
 	}
 	defer upsert.Close()
 
 	sql = `DELETE FROM gmail_message_labels WHERE message_id = $1`
-	unlabel, err := tx.PrepareContext(ctx, sql)
+	unlabel, err := tx.tx.PrepareContext(ctx, sql)
 	if err != nil {
 		return errors.Wrap(err, "db prepare statement failed for unlabel")
 	}
 	defer unlabel.Close()
 
-	_, err = upsert.ExecContext(ctx, msg.PermID, msg.ThreadID)
-	if err != nil {
+	if _, err = upsert.ExecContext(ctx, msg.PermID, msg.ThreadID); err != nil {
 		return errors.Wrap(err, "db upsert failed")
 	}
-	_, err = unlabel.ExecContext(ctx, msg.PermID)
-	if err != nil {
+	if _, err = unlabel.ExecContext(ctx, msg.PermID); err != nil {
 		return errors.Wrap(err, "db unlabel failed")
 	}
+	return nil
+}
 
-	err = tx.Commit()
-	if err != nil {
-		return errors.Wrap(err, "transaction commit failed")
+func formatId(id uint64) string {
+	return fmt.Sprintf("%016x", id)
+}
+
+func orderedToSigned(u uint64) int64 {
+	return int64(u - -math.MinInt64) // Imagine 0..255 -> -128..127
+}
+
+func orderedToUnsigned(s int64) uint64 {
+	return uint64(s) + -math.MinInt64 // Imagine -128..127 -> 0..255
+}
+
+func (tx *Tx) LatestHistoryID(ctx context.Context) (uint64, error) {
+	const q = `SELECT history_id FROM gmail_history_id ORDER BY history_id DESC LIMIT 1`
+	row := tx.tx.QueryRowContext(ctx, q)
+	var id int64
+	if err := row.Scan(&id); err != nil {
+		if err == sql.ErrNoRows {
+			err = nil // a non-error
+		}
+		return 0, err
 	}
-	return err
+	return orderedToUnsigned(id), nil
+}
+
+func (tx *Tx) WriteHistoryID(ctx context.Context, history_id uint64) error {
+	latest, err := tx.LatestHistoryID(ctx)
+	if err != nil {
+		return err
+	}
+	if history_id <= latest {
+		return fmt.Errorf("attempt to decrease the latest history_id")
+	}
+
+	sql := `INSERT INTO gmail_history_id (history_id) values ($1)`
+	_, err = tx.tx.ExecContext(ctx, sql, orderedToSigned(history_id))
+	if err != nil {
+		return errors.Wrap(err, "db insert failed")
+	}
+	return nil
 }

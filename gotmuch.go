@@ -32,7 +32,7 @@ func run() error {
 	}
 
 	ctx := context.Background()
-	db, err := persist.OpenDB(ctx, filepath.Join(homedir.Get(), ".gotmuch.db"))
+	db, err := persist.Open(ctx, filepath.Join(homedir.Get(), ".gotmuch.db"))
 	if err != nil {
 		return errors.Wrap(err, "unable to initialize database")
 	}
@@ -48,7 +48,7 @@ func run() error {
 		return errors.Wrap(err, "unable to initialize GMail")
 	}
 
-	err = sync.CatchUp(ctx, s, db, nm)
+	err = sync.Sync(ctx, s, db, nm)
 	if err != nil {
 		return errors.Wrap(err, "unable to synchronize")
 	}
