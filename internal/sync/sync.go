@@ -11,6 +11,7 @@ import (
 
 	"github.com/pkg/errors"
 	"golang.org/x/sync/errgroup"
+	"google.golang.org/api/googleapi"
 )
 
 func listIds(ctx context.Context, historyId uint64, g MessageStorage, msgs chan<- *message.ID) error {
@@ -112,7 +113,20 @@ func saveIds(ctx context.Context, g MessageStorage, tx *persist.Tx,
 			continue
 		}
 		fullMsg, err := g.GetMessageFull(ctx, id.PermID)
+
 		if err != nil {
+			// TODO: in practice the history list
+			// sometimes delivers messages that can't be
+			// fetched, so we ignore those errors here.
+			// Handle this more gracefully by generalizing
+			// a "not found" error in the MessageStorage
+			// interface?
+			switch err := errors.Cause(err).(type) {
+			case *googleapi.Error:
+				if err.Code == 404 {
+					continue
+				}
+			}
 			return errors.Wrapf(err, "failed getting message %v", id.PermID)
 		}
 		fmt.Println("Inserting ID", id.PermID, "HistoryID",
