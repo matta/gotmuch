@@ -3,17 +3,34 @@ package sync
 import (
 	"context"
 	"fmt"
+	"log"
 
 	"marmstrong/gotmuch/internal/message"
 	"marmstrong/gotmuch/internal/notmuch"
 	"marmstrong/gotmuch/internal/persist"
+
 	"github.com/pkg/errors"
 	"golang.org/x/sync/errgroup"
 )
 
-func listIds(ctx context.Context, g MessageStorage, msgs chan<- *message.ID) error {
+func listIds(ctx context.Context, historyId uint64, g MessageStorage, msgs chan<- *message.ID) error {
 	defer close(msgs)
-	err := g.ListAll(ctx, func(msg *message.ID) error {
+
+	if historyId == 0 {
+		err := g.ListAll(ctx, func(msg *message.ID) error {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case msgs <- msg:
+				return nil
+			}
+		})
+		if err != nil {
+			return errors.Wrap(err, "unable to retrieve all messages")
+		}
+		return nil
+	}
+	err := g.ListFrom(ctx, historyId, func(msg *message.ID) error {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -22,9 +39,10 @@ func listIds(ctx context.Context, g MessageStorage, msgs chan<- *message.ID) err
 		}
 	})
 	if err != nil {
-		err = errors.Wrap(err, "unable to retrieve all messages")
+		return errors.Wrap(err, "unable to retrieve incremental messages")
 	}
-	return err
+	return nil
+
 }
 
 func getMessageMeta(ctx context.Context, s MessageStorage, id string) (msg *message.Header, err error) {
@@ -89,19 +107,6 @@ func saveIds(ctx context.Context, g MessageStorage, tx *persist.Tx,
 			return err
 		}
 
-		// TODO: re-enable this once syncIncrementalGmail() is written.
-		// if !first {
-		// 	continue
-		// }
-		// first = false
-		// hdr, err := getMessageMeta(ctx, g, id.PermID)
-		// if err != nil {
-		// 	return err
-		// }
-		// if err = tx.WriteHistoryID(ctx, hdr.HistoryID); err != nil {
-		// 	return err
-		// }
-
 		// TODO: move full message download elsewhere!
 		if nm.HaveMessage(id.PermID) {
 			continue
@@ -120,10 +125,20 @@ func saveIds(ctx context.Context, g MessageStorage, tx *persist.Tx,
 }
 
 func syncCatchUpGmail(ctx context.Context, g MessageStorage, tx *persist.Tx, nm *notmuch.Service) error {
+	profile, err := g.GetProfile(ctx)
+	if err != nil {
+		return err
+	}
+	log.Println("Full sync to History ID", profile.HistoryID, "for", profile.EmailAddress)
+	err = tx.WriteHistoryID(ctx, profile.HistoryID)
+	if err != nil {
+		return err
+	}
+
 	grp, ctx := errgroup.WithContext(ctx)
 	ids := make(chan *message.ID, 1000)
 	grp.Go(func() error {
-		return listIds(ctx, g, ids)
+		return listIds(ctx, 0, g, ids)
 	})
 	grp.Go(func() error {
 		return saveIds(ctx, g, tx, nm, ids)
@@ -131,8 +146,35 @@ func syncCatchUpGmail(ctx context.Context, g MessageStorage, tx *persist.Tx, nm 
 	return grp.Wait()
 }
 
-func syncIncrementalGmail(ctx context.Context, tx *persist.Tx) error {
-	return errors.New("syncIncrementalGmail: not implemented")
+func syncIncrementalGmail(ctx context.Context, historyID uint64, g MessageStorage, tx *persist.Tx, nm *notmuch.Service) error {
+	profile, err := g.GetProfile(ctx)
+	if err != nil {
+		return err
+	}
+	log.Println("Incremental sync from", historyID, "for", profile.EmailAddress)
+	if historyID == profile.HistoryID {
+		return nil
+	}
+	if historyID > profile.HistoryID {
+		// TODO: handle history ID reset
+		return errors.New("Not implemented: history ID has been reset!")
+	}
+
+	// TODO: can we trust this history ID here?
+	err = tx.WriteHistoryID(ctx, profile.HistoryID)
+	if err != nil {
+		return err
+	}
+
+	grp, ctx := errgroup.WithContext(ctx)
+	ids := make(chan *message.ID, 1000)
+	grp.Go(func() error {
+		return listIds(ctx, historyID, g, ids)
+	})
+	grp.Go(func() error {
+		return saveIds(ctx, g, tx, nm, ids)
+	})
+	return grp.Wait()
 }
 
 func syncGmail(ctx context.Context, g MessageStorage, db *persist.DB, nm *notmuch.Service) error {
@@ -146,11 +188,12 @@ func syncGmail(ctx context.Context, g MessageStorage, db *persist.DB, nm *notmuc
 	if historyId == 0 {
 		err = syncCatchUpGmail(ctx, g, tx, nm)
 	} else {
-		err = syncIncrementalGmail(ctx, tx)
+		err = syncIncrementalGmail(ctx, historyId, g, tx, nm)
 	}
 	if err != nil {
-		return err
+		return errors.Wrap(err, "from syncGmail")
 	}
+
 	return tx.Commit()
 }
 

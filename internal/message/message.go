@@ -40,3 +40,11 @@ type Body struct {
 	// The entire email message in an RFC 2822 formatted string.
 	Raw string
 }
+
+// Profile defines per-account information in a message mailbox.
+type Profile struct {
+	EmailAddress string
+
+	// The ID of the mailbox's current history record.
+	HistoryID uint64
+}

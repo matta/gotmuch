@@ -8,6 +8,7 @@ import (
 	"net/http"
 
 	"marmstrong/gotmuch/internal/message"
+
 	"github.com/pkg/errors"
 	"golang.org/x/time/rate"
 	"google.golang.org/api/gmail/v1"
@@ -22,6 +23,7 @@ const (
 	// See https://developers.google.com/gmail/api/v1/reference/quota
 	gmailQuotaUnitsPerSecond       = 250
 	gmailQuotaUnitsPerMessagesList = 1
+	gmailQuotaUnitsPerHistoryList  = 2
 )
 
 // GmailService provides access to messages stored in Google's GMail
@@ -70,6 +72,44 @@ func (s *GmailService) ListAll(ctx context.Context, handler func(*message.ID) er
 	return err
 }
 
+func (s *GmailService) ListFrom(ctx context.Context, historyID uint64, handler func(*message.ID) error) error {
+	wait := func() error {
+		return s.limiter.WaitN(ctx, gmailQuotaUnitsPerHistoryList)
+	}
+	if err := wait(); err != nil {
+		return err
+	}
+
+	// TODO: request labelAdded, labelRemoved, messageDeleted too.
+	req := gmail.NewUsersHistoryService(s.service).List("me").Context(ctx).HistoryTypes("messageAdded").StartHistoryId(historyID)
+	total := 0
+	err := req.Pages(ctx, func(page *gmail.ListHistoryResponse) (err error) {
+		total += len(page.History)
+		log.Printf("listed page of Gmail history; count %d; total so far %d", len(page.History), total)
+		for _, h := range page.History {
+			// TODO: handle labelAdded, labelRemoved, messageDeleted too.
+			for _, added := range h.MessagesAdded {
+				m := &message.ID{
+					PermID:   added.Message.Id,
+					ThreadID: added.Message.ThreadId,
+				}
+				if err := handler(m); err != nil {
+					return err
+				}
+			}
+		}
+		if page.NextPageToken != "" {
+			err = wait()
+		}
+		return
+	})
+	log.Printf("done listing Gmail messages; total %d", total)
+	if err != nil {
+		err = errors.Wrap(err, "unable to retrieve all messages")
+	}
+	return err
+}
+
 func (s *GmailService) GetMessageMeta(ctx context.Context, id string) (*message.Header, error) {
 	msg, err := gmail.NewUsersMessagesService(s.service).Get("me", id).
 		Context(ctx).Format("minimal").Do()
@@ -101,6 +141,17 @@ func (s *GmailService) GetMessageFull(ctx context.Context, id string) (*message.
 			SizeEstimate: msg.SizeEstimate},
 		Raw: string(raw)}
 	return m, nil
+}
+
+func (s *GmailService) GetProfile(ctx context.Context) (*message.Profile, error) {
+	u, err := gmail.NewUsersService(s.service).GetProfile("me").Context(ctx).Do()
+	if err != nil {
+		return nil, err
+	}
+	return &message.Profile{
+		EmailAddress: u.EmailAddress,
+		HistoryID:    u.HistoryId,
+	}, nil
 }
 
 // func getFormat(minimal bool) string {

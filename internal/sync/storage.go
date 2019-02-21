@@ -14,6 +14,7 @@ import (
 // system.
 type MessageLister interface {
 	ListAll(ctx context.Context, handler func(*message.ID) error) error
+	ListFrom(ctx context.Context, historyId uint64, handler func(*message.ID) error) error
 }
 
 // MessageMetaGetter gets per message metadata from message storage
@@ -23,9 +24,16 @@ type MessageMetaGetter interface {
 	GetMessageFull(ctx context.Context, id string) (*message.Body, error)
 }
 
+// MessageProfiler gets per account metadata from a message storage
+// system.
+type MessageProfiler interface {
+	GetProfile(ctx context.Context) (*message.Profile, error)
+}
+
 // MessageStorage provides all possible actions available to deal with
 // message storage.
 type MessageStorage interface {
 	MessageLister
 	MessageMetaGetter
+	MessageProfiler
 }
