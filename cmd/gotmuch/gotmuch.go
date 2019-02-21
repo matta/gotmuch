@@ -56,6 +56,7 @@ func run() error {
 }
 
 func main() {
+	flag.Parse()
 	if *flagTrace {
 		tracehttp.WrapDefaultTransport()
 	}
