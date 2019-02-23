@@ -121,9 +121,13 @@ func New() (*http.Client, error) {
 		return nil, fmt.Errorf("GOTMUCH_USER must contain a hostname: %q", login)
 	}
 
+	sso, ok := os.LookupEnv("GOTMUCH_SSO")
+	if !ok {
+		return nil, errors.New("GOTMUCH_SSO environment variable must be set")
+	}
+
 	src := &ssoTokenSource{
-		// TODO: do not hard code the sso command path.
-		sso:   "/google/data/ro/teams/oneplatform/sso",
+		sso:   sso,
 		user:  login,
 		scope: gmail.ReadonlyScope,
 	}
