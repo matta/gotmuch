@@ -9,9 +9,6 @@ program shoud behave identically to the one used by
 https://github.com/google/oauth2l (see
 https://github.com/google/oauth2l/blob/abeb08f278e7973101d881b5d962055bf52f3950/util/sso.go#L24).
 
-The required API Key, required by Google's corporate GMail setup,
-is hard coded in the source.  TODO: don't do that.  ;-)
-
 Note: this program cannot use the Go API provided by
 https://github.com/google/oauth2l for three primary reasons:
 
@@ -122,17 +119,14 @@ func New() (*http.Client, error) {
 		scope: gmail.ReadonlyScope,
 	}
 
-	// This API key is generated from the Google Developer
-	// Console: API & Auth -> APIs -> Credentials -> Add
-	// Credentials.  Type=Server.  No IP restrictions (probably
-	// unwise).
-	//
-	// TODO: do not hard code the API Key.
-	const apiKey = "AIzaSyC5jDn2OKqDbJhObCasuNg8QYoaxJhmWiI"
+	trans := &oauth2.Transport{Source: oauth2.ReuseTokenSource(nil, src)}
 
-	trans := &oauth2.Transport{
-		Source: oauth2.ReuseTokenSource(nil, src),
-		Base:   &transport.APIKey{Key: apiKey},
+	apiKey, ok := os.LookupEnv("GOTMUCH_API_KEY")
+	if ok {
+		// This API key is generated from the Google Developer
+		// Console: API & Auth -> APIs -> Credentials -> Add
+		// Credentials.  Type=Server.
+		trans.Base = &transport.APIKey{Key: apiKey}
 	}
 
 	return &http.Client{Transport: trans}, nil
