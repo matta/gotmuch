@@ -1,0 +1,3 @@
+# gotmuch
+
+*STATUS*: non-functional
