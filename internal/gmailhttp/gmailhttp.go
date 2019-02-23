@@ -7,7 +7,7 @@ from a corporate desktop, for the current user.
 OAuth2.0 tokens are acquired by running an external program.  The
 program shoud behave identically to the one used by
 https://github.com/google/oauth2l (see
-https://github.com/google/oauth2l/blob/master/util/sso.go).
+https://github.com/google/oauth2l/blob/abeb08f278e7973101d881b5d962055bf52f3950/util/sso.go#L24).
 
 The required API Key, required by Google's corporate GMail setup,
 is hard coded in the source.  TODO: don't do that.  ;-)
@@ -29,17 +29,7 @@ https://github.com/google/oauth2l for three primary reasons:
 
 BUGS:
 
-This package code hard codes a tokens' expire time at one hour, since
-the API supported by the oauth2l SSO program does not provide the
-tokens' actual expire time.  It isn't clear that the
-golang.org/x/oauth2 approach to token expiry, the token.Valid()
-method, encourages well designed software anyway.  OAuth 2.0 clients
-should be designed to gracefully handle expired token responses from
-the server at any time.  The client's notion of token expiry should be
-at most an optimization that prevents unecessary network round trips,
-but golang.org/x/oauth2 seems to be designed on the assumption that
-the client has perfect knowledge of when a token will expire (which is
-impossible).
+Token expiry may nobe be handled properly.
 
 */
 
