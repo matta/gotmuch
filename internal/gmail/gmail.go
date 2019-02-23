@@ -21,9 +21,14 @@ const (
 	ReadonlyScope = gmail_api.GmailReadonlyScope
 
 	// See https://developers.google.com/gmail/api/v1/reference/quota
-	gmailQuotaUnitsPerSecond       = 250
-	gmailQuotaUnitsPerMessagesList = 1
+	gmailQuotaUnitsMessagesGet     = 5
+	gmailQuotaUnitsPerGetProfile   = 2
 	gmailQuotaUnitsPerHistoryList  = 2
+	gmailQuotaUnitsPerMessagesList = 1
+
+	gmailQuotaUnitsPerSecond = 250
+	gmailRateLimitPerSecond  = gmailQuotaUnitsPerSecond / 2
+	gmailRateLimitBurst      = gmailQuotaUnitsPerSecond
 )
 
 // GmailService provides access to messages stored in Google's GMail
@@ -39,7 +44,7 @@ func New(client *http.Client) (*GmailService, error) {
 	if err != nil {
 		return nil, err
 	}
-	l := rate.NewLimiter(gmailQuotaUnitsPerSecond/2.0, gmailQuotaUnitsPerSecond)
+	l := rate.NewLimiter(gmailRateLimitPerSecond, gmailRateLimitBurst)
 	return &GmailService{service: s, limiter: l}, nil
 }
 
@@ -111,6 +116,9 @@ func (s *GmailService) ListFrom(ctx context.Context, historyID uint64, handler f
 }
 
 func (s *GmailService) GetMessageMeta(ctx context.Context, id string) (*message.Header, error) {
+	if err := s.limiter.WaitN(ctx, gmailQuotaUnitsMessagesGet); err != nil {
+		return nil, err
+	}
 	msg, err := gmail.NewUsersMessagesService(s.service).Get("me", id).
 		Context(ctx).Format("minimal").Do()
 	if err != nil {
@@ -124,6 +132,9 @@ func (s *GmailService) GetMessageMeta(ctx context.Context, id string) (*message.
 }
 
 func (s *GmailService) GetMessageFull(ctx context.Context, id string) (*message.Body, error) {
+	if err := s.limiter.WaitN(ctx, gmailQuotaUnitsMessagesGet); err != nil {
+		return nil, err
+	}
 	msg, err := gmail.NewUsersMessagesService(s.service).Get("me", id).
 		Context(ctx).Format("raw").Do()
 	if err != nil {
@@ -144,6 +155,9 @@ func (s *GmailService) GetMessageFull(ctx context.Context, id string) (*message.
 }
 
 func (s *GmailService) GetProfile(ctx context.Context) (*message.Profile, error) {
+	if err := s.limiter.WaitN(ctx, gmailQuotaUnitsPerGetProfile); err != nil {
+		return nil, err
+	}
 	u, err := gmail.NewUsersService(s.service).GetProfile("me").Context(ctx).Do()
 	if err != nil {
 		return nil, err
