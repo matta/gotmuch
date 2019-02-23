@@ -1,4 +1,3 @@
-// Package gmail TODO(marmstrong): writeme
 package gmail
 
 import (
@@ -38,7 +37,6 @@ type GmailService struct {
 	limiter *rate.Limiter
 }
 
-// NewGmailService TODO(marmstrong): writeme
 func New(client *http.Client) (*GmailService, error) {
 	s, err := gmail.New(client)
 	if err != nil {
@@ -48,7 +46,6 @@ func New(client *http.Client) (*GmailService, error) {
 	return &GmailService{service: s, limiter: l}, nil
 }
 
-// ListAll TODO(marmstrong): writeme
 func (s *GmailService) ListAll(ctx context.Context, handler func(*message.ID) error) error {
 	if err := s.limiter.WaitN(ctx, gmailQuotaUnitsPerMessagesList); err != nil {
 		return err

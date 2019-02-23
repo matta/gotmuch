@@ -21,7 +21,6 @@ const (
 	pathFarm16 = "abcdefghijklmnop"
 )
 
-// Service TODO(marmstrong): writeme
 type Service struct {
 	// Path to the directory we're writing files to within the
 	// notmuch database.  Equivalent to; `notmuch config get
@@ -43,7 +42,6 @@ func (p path) Join() string {
 	return filepath.Join(parts...)
 }
 
-// New TODO(marmstrong): writeme
 func New() (*Service, error) {
 	// TODO: make the notmuch binary name configurable.
 	out, err := exec.Command("notmuch", "config", "get", "database.path").Output()
@@ -62,13 +60,11 @@ func New() (*Service, error) {
 	return s, nil
 }
 
-// HaveMessage TODO(marmstrong): writeme
 func (s *Service) HaveMessage(id string) bool {
 	_, err := os.Stat(s.makePath(id).Join())
 	return err == nil
 }
 
-// Insert TODO(marmstrong): writeme
 func (s *Service) Insert(ctx context.Context, msg *message.Body) error {
 	if msg.PermID == "" {
 		return errors.New("message has no ID")

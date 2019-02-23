@@ -1,32 +1,14 @@
 /*
 Pakage gmailhttp implements an HTTP client for gmail.
 
-Status: supports access from Google's internal corporate networks,
-from a corporate desktop, for the current user.
-
 OAuth2.0 tokens are acquired by running an external program.  The
 program shoud behave identically to the one used by
 https://github.com/google/oauth2l (see
 https://github.com/google/oauth2l/blob/abeb08f278e7973101d881b5d962055bf52f3950/util/sso.go#L24).
 
-Note: this program cannot use the Go API provided by
-https://github.com/google/oauth2l for three primary reasons:
-
-1) no support for SSO auth from the oauth2l Go API.  Support is there
-   only from the package's command line "oauth2l" program.
-
-1) no direct support for using OAuth2.0 with API Keys.  If an API Key
-   is set in the oauth2l.Config the code attempts a non-OAuth
-   authentication method.
-
-2) no support for refreshing tokens on expiry.  The http.Client
-   returned by the library never refreshes tokens, which is broken for
-   long lived clients (and possibly short lived dones too, if the
-   token happens to have an expire time in the near future).
-
 BUGS:
 
-Token expiry may nobe be handled properly.
+Token expiry may not be be handled properly.
 
 */
 

@@ -1,4 +1,3 @@
-// yo
 package persist
 
 import (
@@ -9,6 +8,7 @@ import (
 	"time"
 
 	"marmstrong/gotmuch/internal/message"
+
 	"github.com/pkg/errors"
 )
 
@@ -20,7 +20,6 @@ type Tx struct {
 	tx *sql.Tx
 }
 
-// OpenDB TODO: write me
 func Open(ctx context.Context, path string) (*DB, error) {
 	// The _busy_timeout is a SQLite extension that controls how long SQLite will poll
 	// before giving up.  The default of 5 seconds is too short in practice, especially
@@ -193,7 +192,6 @@ PRIMARY KEY (history_id)
 	return nil
 }
 
-// InsertMessageID TODO: write me
 func (tx *Tx) InsertMessageID(ctx context.Context, msg *message.ID) error {
 	sql := `INSERT OR REPLACE INTO gmail_messages
 		(message_id, thread_id) values ($1, $2)
