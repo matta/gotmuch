@@ -47,12 +47,17 @@ package gmailhttp
 
 import (
 	"bytes"
+	"fmt"
 	"net/http"
+	"net/mail"
+	"os"
 	"os/exec"
-	"os/user"
+	"strings"
 	"time"
 
 	"marmstrong/gotmuch/internal/gmail"
+
+	"github.com/pkg/errors"
 	"golang.org/x/oauth2"
 	"google.golang.org/api/googleapi/transport"
 )
@@ -101,28 +106,25 @@ func (s *ssoTokenSource) Token() (*oauth2.Token, error) {
 	}, nil
 }
 
-// username returns the current user name or an error.
-func username() (string, error) {
-	user, err := user.Current()
-	if err != nil {
-		return "", err
-	}
-	return user.Username, nil
-}
-
 // New returns a new HTTP client capable of using the GMail API.
 func New() (*http.Client, error) {
-	// TODO: do not hard code the user.
-	user, err := username()
+	user, ok := os.LookupEnv("GOTMUCH_USER")
+	if !ok {
+		return nil, errors.New("GOTMUCH_USER environment must be set")
+	}
+	addr, err := mail.ParseAddress(user)
 	if err != nil {
-		return nil, err
+		return nil, errors.Wrapf(err, "GOTMUCH_USER fails to parse as an email address: %q", user)
+	}
+	login := addr.Address
+	if !strings.ContainsRune(login, '@') {
+		return nil, fmt.Errorf("GOTMUCH_USER must contain a hostname: %q", login)
 	}
 
 	src := &ssoTokenSource{
 		// TODO: do not hard code the sso command path.
-		sso: "/google/data/ro/teams/oneplatform/sso",
-		// TODO: do not hard code "@google.com".
-		user:  user + "@google.com",
+		sso:   "/google/data/ro/teams/oneplatform/sso",
+		user:  login,
 		scope: gmail.ReadonlyScope,
 	}
 
