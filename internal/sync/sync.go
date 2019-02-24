@@ -65,94 +65,16 @@ func getMessageMeta(ctx context.Context, s MessageStorage, id string) (msg *mess
 	return
 }
 
-// func handleListedMessage(ctx context.Context, db *sql.DB, g MessageStorage, nm *notmuch.Service, msg *message.ID) error {
-// 	if err := persist.InsertMessageID(ctx, db, msg); err != nil {
-// 		return errors.Wrapf(err, "handling listed message")
-// 	}
-
-// 	// if nm.HaveMessage(msg.PermID) {
-// 	// 	return nil
-// 	// }
-
-// 	// fullMsg, err := g.GetMessageFull(ctx, msg.PermID)
-// 	// if err != nil {
-// 	// 	return errors.Wrapf(err, "failed getting message %v", msg.PermID)
-// 	// }
-// 	// fmt.Println("Inserting ID", msg.PermID, "HistoryID", fullMsg.HistoryID, "SizeEstimate", fullMsg.SizeEstimate)
-// 	// return nm.Insert(ctx, fullMsg)
-// }
-
-// func catchUp(ctx context.Context, s MessageStorage, db *sql.DB, nm *notmuch.Service) error {
-// g, ctx := errgroup.WithContext(ctx)
-// msgs := make(chan *message.ID)
-// g.Go(func() error {
-// 	return listMessages(ctx, s, msgs)
-// })
-
-// const concurrency = 100
-// for i := 0; i < concurrency; i++ {
-// 	msg, ok := <-msgs
-// 	if !ok {
-// 		break
-// 	}
-// 	g.Go(func() error {
-// 		var err error
-// 		for {
-// 			err = handleListedMessage(ctx, db, s, nm, msg)
-// 			if err != nil {
-// 				break
-// 			}
-// 			msg, ok = <-msgs
-// 			if !ok {
-// 				break
-// 			}
-// 		}
-// 		return errors.Wrap(err, "unable to handle listed message")
-// 	})
-// }
-
-// return g.Wait()
-// }
-
-func saveIds(ctx context.Context, g MessageStorage, tx *persist.Tx,
-	nm *notmuch.Service, ids <-chan *message.ID) error {
-	// first := true
+func saveIds(ctx context.Context, tx *persist.Tx, ids <-chan *message.ID) error {
 	for id := range ids {
 		if err := tx.InsertMessageID(ctx, id); err != nil {
-			return err
-		}
-
-		// TODO: move full message download elsewhere!
-		if nm.HaveMessage(id.PermID) {
-			continue
-		}
-		fullMsg, err := g.GetMessageFull(ctx, id.PermID)
-
-		if err != nil {
-			// TODO: in practice the history list
-			// sometimes delivers messages that can't be
-			// fetched, so we ignore those errors here.
-			// Handle this more gracefully by generalizing
-			// a "not found" error in the MessageStorage
-			// interface?
-			switch err := errors.Cause(err).(type) {
-			case *googleapi.Error:
-				if err.Code == 404 {
-					continue
-				}
-			}
-			return errors.Wrapf(err, "failed getting message %v", id.PermID)
-		}
-		fmt.Println("Inserting ID", id.PermID, "HistoryID",
-			fullMsg.HistoryID, "SizeEstimate", fullMsg.SizeEstimate)
-		if err := nm.Insert(ctx, fullMsg); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func syncCatchUpGmail(ctx context.Context, g MessageStorage, tx *persist.Tx, nm *notmuch.Service) error {
+func pullComplete(ctx context.Context, g MessageStorage, tx *persist.Tx) error {
 	profile, err := g.GetProfile(ctx)
 	if err != nil {
 		return err
@@ -169,12 +91,12 @@ func syncCatchUpGmail(ctx context.Context, g MessageStorage, tx *persist.Tx, nm 
 		return listIds(ctx, 0, g, ids)
 	})
 	grp.Go(func() error {
-		return saveIds(ctx, g, tx, nm, ids)
+		return saveIds(ctx, tx, ids)
 	})
 	return grp.Wait()
 }
 
-func syncIncrementalGmail(ctx context.Context, historyID uint64, g MessageStorage, tx *persist.Tx, nm *notmuch.Service) error {
+func pullIncremental(ctx context.Context, historyID uint64, g MessageStorage, tx *persist.Tx) error {
 	profile, err := g.GetProfile(ctx)
 	if err != nil {
 		return err
@@ -200,12 +122,12 @@ func syncIncrementalGmail(ctx context.Context, historyID uint64, g MessageStorag
 		return listIds(ctx, historyID, g, ids)
 	})
 	grp.Go(func() error {
-		return saveIds(ctx, g, tx, nm, ids)
+		return saveIds(ctx, tx, ids)
 	})
 	return grp.Wait()
 }
 
-func syncGmail(ctx context.Context, g MessageStorage, db *persist.DB, nm *notmuch.Service) error {
+func pullList(ctx context.Context, g MessageStorage, db *persist.DB, nm *notmuch.Service) error {
 	tx, err := db.Begin(ctx)
 	defer tx.Rollback()
 
@@ -214,46 +136,101 @@ func syncGmail(ctx context.Context, g MessageStorage, db *persist.DB, nm *notmuc
 		return err
 	}
 	if historyId == 0 {
-		err = syncCatchUpGmail(ctx, g, tx, nm)
+		err = pullComplete(ctx, g, tx)
 	} else {
-		err = syncIncrementalGmail(ctx, historyId, g, tx, nm)
+		err = pullIncremental(ctx, historyId, g, tx)
 	}
 	if err != nil {
-		return errors.Wrap(err, "from syncGmail")
+		return errors.Wrap(err, "failed to list messages in pullList()")
 	}
 
 	return tx.Commit()
 }
 
-func Sync(ctx context.Context, g MessageStorage, db *persist.DB, nm *notmuch.Service) error {
-	if err := syncGmail(ctx, g, db, nm); err != nil {
-		return err
+func pullDownload(ctx context.Context, g MessageStorage, db *persist.DB, nm *notmuch.Service) error {
+	tx, err := db.Begin(ctx)
+	defer tx.Rollback()
+
+	grp, ctx := errgroup.WithContext(ctx)
+	ids := make(chan message.ID)
+
+	grp.Go(func() error {
+		defer close(ids)
+		return tx.ListOutdated(ctx, func(id message.ID) error {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case ids <- id:
+				return nil
+			}
+		})
+	})
+
+	const concurrency = 1
+	for i := 0; i < concurrency; i++ {
+		id, ok := <-ids
+		if !ok {
+			break
+		}
+		grp.Go(func() error {
+			for {
+				if err = handleOutdatedMessage(ctx, tx, g, nm, id); err != nil {
+					errors.Wrap(err, "unable to handle outdated message")
+				}
+				id, ok = <-ids
+				if !ok {
+					return nil
+				}
+			}
+		})
 	}
-	return errors.New("sync.Sync: pulling messages not implemented")
+
+	if err := grp.Wait(); err != nil {
+		return errors.Wrap(err, "unable to pull outdated messages")
+	}
+	return tx.Commit()
 }
 
-// func getMessages(ctx context.Context, db *sql.DB, messages *gmail.UsersMessagesService) error {
-// 	sql := `select message_id, downloaded from messages where
-// 		history_id is null
-// 		OR downloaded = 0;`
-// 	rows, err := db.QueryContext(ctx, sql)
-// 	if err != nil {
-// 		return errors.Wrap(err, "db query failed")
-// 	}
-// 	defer rows.Close()
+func handleOutdatedMessage(ctx context.Context, tx *persist.Tx, g MessageStorage, nm *notmuch.Service, id message.ID) error {
+	// TODO: move full message download elsewhere once we're tracking labels.
+	if nm.HaveMessage(id.PermID) {
+		return nil
+	}
+	fullMsg, err := g.GetMessageFull(ctx, id.PermID)
 
-// 	for rows.Next() {
-// 		var id string
-// 		var downloaded bool
-// 		if err := rows.Scan(&id, &downloaded); err != nil {
-// 			return errors.Wrap(err, "db scan failed")
-// 		}
+	// TODO: save history ID and label information here.
 
-// 		log.Infof("need to label message_id %#v downloaded %#v", id, downloaded)
-// 	}
-// 	if err = rows.Err(); err != nil {
-// 		return errors.Wrap(err, "db rows failed")
-// 	}
+	if err != nil {
+		// In practice the history list sometimes delivers
+		// messages that can't be fetched; ignore them.
+		//
+		// TODOD: Handle this more gracefully by generalizing
+		// a "not found" error in the MessageStorage
+		// interface?
+		switch err := errors.Cause(err).(type) {
+		case *googleapi.Error:
+			if err.Code == 404 {
+				return nil
+			}
+		}
+		return errors.Wrapf(err, "failed getting message %v", id.PermID)
+	}
+	fmt.Println("Inserting ID", id.PermID, "HistoryID",
+		fullMsg.HistoryID, "SizeEstimate", fullMsg.SizeEstimate)
+	if err := nm.Insert(ctx, fullMsg); err != nil {
+		return err
+	}
+	return nil
+}
 
-// 	return nil
-// }
+func Sync(ctx context.Context, g MessageStorage, db *persist.DB, nm *notmuch.Service) error {
+	log.Print("Pulling list of GMail messages")
+	if err := pullList(ctx, g, db, nm); err != nil {
+		return errors.Wrap(err, "failed to sync")
+	}
+	log.Print("Pulling GMail messages")
+	if err := pullDownload(ctx, g, db, nm); err != nil {
+		return errors.Wrap(err, "failed to sync")
+	}
+	return nil
+}

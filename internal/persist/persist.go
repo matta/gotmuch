@@ -18,6 +18,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log"
 	"math"
 	"time"
 
@@ -40,7 +41,7 @@ func Open(ctx context.Context, path string) (*DB, error) {
 	// in slower debug builds; go with 5 minutes.
 	var busyTimeout = int(5*time.Minute) / int(time.Millisecond)
 	dsn := fmt.Sprintf("file:%s?_busy_timeout=%d", path, busyTimeout)
-	fmt.Println("opening database at", dsn)
+	log.Println("opening database at", dsn)
 	db, err := sql.Open("sqlite3", dsn)
 	if err != nil {
 		return nil, errors.Wrapf(err, "could not open database at %s", dsn)
@@ -106,10 +107,13 @@ func initSchema(ctx context.Context, db *sql.DB) error {
 	//   Notes:
 	//
 	//   If NULL, no Users.messages.get has been performed
-	//   successfully for this message yet.
+	//   successfully for this message yet, or the message_id has
+	//   appeared in a Users.history.list response.
 	//
 	//   This field is set NULL for all messages before each GMail
 	//   API "list" call, and populated on the subsequent "get".
+	//   It is set NULL when a Users.history.list response
+	//   includes the message_id.
 	//
 	// Field: size_estimate
 	//
@@ -229,6 +233,31 @@ func (tx *Tx) InsertMessageID(ctx context.Context, msg *message.ID) error {
 	}
 	if _, err = unlabel.ExecContext(ctx, msg.PermID); err != nil {
 		return errors.Wrap(err, "db unlabel failed")
+	}
+	return nil
+}
+
+func (tx *Tx) ListOutdated(ctx context.Context, handler func(message.ID) error) error {
+	const sql = `
+SELECT message_id, thread_id
+FROM gmail_messages
+WHERE history_id IS NULL
+`
+	rows, err := tx.tx.QueryContext(ctx, sql)
+	if err != nil {
+		return errors.Wrap(err, "db prepare statement failed in ListOutdatedHeaders")
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var permID string
+		var threadID string
+		if err := rows.Scan(&permID, &threadID); err != nil {
+			return errors.Wrap(err, "db scan failed in ListOutdatedHeaders")
+		}
+		if err := handler(message.ID{PermID: permID, ThreadID: threadID}); err != nil {
+			return err
+		}
 	}
 	return nil
 }

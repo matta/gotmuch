@@ -17,7 +17,6 @@ package main
 import (
 	"context"
 	"flag"
-	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -78,6 +77,6 @@ func main() {
 	if err := run(); err != nil {
 		log.Fatalf("Failed: %v\n", err)
 	}
-	fmt.Print("Success!\n")
+	log.Print("Success!\n")
 	os.Exit(0)
 }
