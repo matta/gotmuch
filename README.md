@@ -2,19 +2,20 @@
 
 ## Status: barely working
 
-This program is useful for me, in a limited fashion.  It can download mail from
-GMail in a way that `notmuch` can index it, but there is no label/tag
+This program is useful for me, but only in a limited fashion.  It can download
+mail from GMail in a way that `notmuch` can index it, but there is no label/tag
 synchronization in either direction, and no synchronization of deleted mail.
 
 ## Functionality and Goals
 
-1.  Synchronize GMail with http://notmuchmail.org.
-2.  Two way synchronization of tags.
-3.  
+1. Synchronize GMail messages to local disk, where they can be indexed with
+   `notmuch` (see http://notmuchmail.org).
+2. Synchronize GMail labels with `notmuch` tags, in both directions.
+3. Learn a bit about programming in Go.  ;-)
 
-This program synchronizes GMail messages and their labels to http://notmuchail.org
-mail stores, where it can then be read and manipulated by `notmuch` mail readers
-and scripts.
+This allows the user the best of both worlds: ubiquitous access to their email
+with the standard GMail interfaces, but access to the extremely flexible
+tagging, filtering, and email processing capabilities of `notmuch`.
 
 ## Similar Programs
 
@@ -27,4 +28,3 @@ synchronizing multiple `notmuch` mail stores.
 # Disclaimer
 
 This is not an official Google product.
-
