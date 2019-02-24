@@ -237,7 +237,50 @@ func (tx *Tx) InsertMessageID(ctx context.Context, msg *message.ID) error {
 	return nil
 }
 
-func (tx *Tx) ListOutdated(ctx context.Context, handler func(message.ID) error) error {
+func (tx *Tx) UpdateHeader(ctx context.Context, hdr *message.Header) error {
+	sql := `
+UPDATE gmail_messages SET (history_id, size_estimate) = ($1, $2)
+WHERE message_id = $3;
+`
+	history, err := tx.tx.PrepareContext(ctx, sql)
+	if err != nil {
+		return errors.Wrap(err, "db prepare statement failed for UpdateHeader")
+	}
+	defer history.Close()
+
+	sql = `
+DELETE FROM gmail_message_labels WHERE message_id = $1
+`
+	unlabel, err := tx.tx.PrepareContext(ctx, sql)
+	if err != nil {
+		return errors.Wrap(err, "db prepare statement failed for unlabel")
+	}
+	defer unlabel.Close()
+
+	sql = `
+INSERT INTO gmail_message_labels (message_id, label_id) values ($1, $2)
+`
+	label, err := tx.tx.PrepareContext(ctx, sql)
+	if err != nil {
+		return errors.Wrap(err, "db prepare statement failed for unlabel")
+	}
+	defer label.Close()
+
+	if _, err = history.ExecContext(ctx, hdr.HistoryID, hdr.SizeEstimate, hdr.ID.PermID); err != nil {
+		return errors.Wrap(err, "UpdateHeader")
+	}
+	if _, err = unlabel.ExecContext(ctx, hdr.ID.PermID); err != nil {
+		return errors.Wrap(err, "UpdateHeader")
+	}
+	for _, labelID := range hdr.LabelIDs {
+		if _, err = label.ExecContext(ctx, hdr.ID.PermID, labelID); err != nil {
+			return errors.Wrap(err, "UpdateHeader")
+		}
+	}
+	return nil
+}
+
+func (tx *Tx) ListUpdated(ctx context.Context, handler func(message.ID) error) error {
 	const sql = `
 SELECT message_id, thread_id
 FROM gmail_messages

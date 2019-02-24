@@ -37,7 +37,7 @@ type Header struct {
 	// The current set of label identifiers associated with the
 	// message.  These identifiers are not the user visible label
 	// names!
-	LabelIds []string
+	LabelIDs []string
 
 	// An estimated size of the message (bytes).
 	SizeEstimate int64

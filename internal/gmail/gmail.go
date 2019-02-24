@@ -126,7 +126,7 @@ func (s *GmailService) ListFrom(ctx context.Context, historyID uint64, handler f
 	return err
 }
 
-func (s *GmailService) GetMessageMeta(ctx context.Context, id string) (*message.Header, error) {
+func (s *GmailService) GetMessageHeader(ctx context.Context, id string) (*message.Header, error) {
 	if err := s.limiter.WaitN(ctx, quotaUnitsMessagesGet); err != nil {
 		return nil, err
 	}
@@ -136,7 +136,7 @@ func (s *GmailService) GetMessageMeta(ctx context.Context, id string) (*message.
 		return nil, errors.Wrapf(err, "getting message %v from gmail", id)
 	}
 	m := &message.Header{ID: message.ID{PermID: msg.Id, ThreadID: msg.ThreadId},
-		LabelIds:     msg.LabelIds,
+		LabelIDs:     msg.LabelIds,
 		HistoryID:    msg.HistoryId,
 		SizeEstimate: msg.SizeEstimate}
 	return m, nil
@@ -158,7 +158,7 @@ func (s *GmailService) GetMessageFull(ctx context.Context, id string) (*message.
 	m := &message.Body{
 		Header: message.Header{
 			ID:           message.ID{PermID: msg.Id, ThreadID: msg.ThreadId},
-			LabelIds:     msg.LabelIds,
+			LabelIDs:     msg.LabelIds,
 			HistoryID:    msg.HistoryId,
 			SizeEstimate: msg.SizeEstimate},
 		Raw: string(raw)}

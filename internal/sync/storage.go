@@ -33,7 +33,7 @@ type MessageLister interface {
 // MessageMetaGetter gets per message metadata from message storage
 // system.
 type MessageMetaGetter interface {
-	GetMessageMeta(ctx context.Context, id string) (*message.Header, error)
+	GetMessageHeader(ctx context.Context, id string) (*message.Header, error)
 	GetMessageFull(ctx context.Context, id string) (*message.Body, error)
 }
 

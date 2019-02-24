@@ -60,11 +60,6 @@ func listIds(ctx context.Context, historyId uint64, g MessageStorage, msgs chan<
 
 }
 
-func getMessageMeta(ctx context.Context, s MessageStorage, id string) (msg *message.Header, err error) {
-	msg, err = s.GetMessageMeta(ctx, id)
-	return
-}
-
 func saveIds(ctx context.Context, tx *persist.Tx, ids <-chan *message.ID) error {
 	for id := range ids {
 		if err := tx.InsertMessageID(ctx, id); err != nil {
@@ -74,7 +69,7 @@ func saveIds(ctx context.Context, tx *persist.Tx, ids <-chan *message.ID) error 
 	return nil
 }
 
-func pullComplete(ctx context.Context, g MessageStorage, tx *persist.Tx) error {
+func pullAll(ctx context.Context, g MessageStorage, tx *persist.Tx) error {
 	profile, err := g.GetProfile(ctx)
 	if err != nil {
 		return err
@@ -136,7 +131,7 @@ func pullList(ctx context.Context, g MessageStorage, db *persist.DB, nm *notmuch
 		return err
 	}
 	if historyId == 0 {
-		err = pullComplete(ctx, g, tx)
+		err = pullAll(ctx, g, tx)
 	} else {
 		err = pullIncremental(ctx, historyId, g, tx)
 	}
@@ -156,7 +151,7 @@ func pullDownload(ctx context.Context, g MessageStorage, db *persist.DB, nm *not
 
 	grp.Go(func() error {
 		defer close(ids)
-		return tx.ListOutdated(ctx, func(id message.ID) error {
+		return tx.ListUpdated(ctx, func(id message.ID) error {
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
@@ -166,7 +161,7 @@ func pullDownload(ctx context.Context, g MessageStorage, db *persist.DB, nm *not
 		})
 	})
 
-	const concurrency = 1
+	const concurrency = 100
 	for i := 0; i < concurrency; i++ {
 		id, ok := <-ids
 		if !ok {
@@ -174,8 +169,8 @@ func pullDownload(ctx context.Context, g MessageStorage, db *persist.DB, nm *not
 		}
 		grp.Go(func() error {
 			for {
-				if err = handleOutdatedMessage(ctx, tx, g, nm, id); err != nil {
-					errors.Wrap(err, "unable to handle outdated message")
+				if err = handleUpdatedMessage(ctx, tx, g, nm, id); err != nil {
+					return errors.Wrap(err, "unable to pull message")
 				}
 				id, ok = <-ids
 				if !ok {
@@ -186,33 +181,52 @@ func pullDownload(ctx context.Context, g MessageStorage, db *persist.DB, nm *not
 	}
 
 	if err := grp.Wait(); err != nil {
-		return errors.Wrap(err, "unable to pull outdated messages")
+		return errors.Wrap(err, "unable to pull messages")
 	}
 	return tx.Commit()
 }
 
-func handleOutdatedMessage(ctx context.Context, tx *persist.Tx, g MessageStorage, nm *notmuch.Service, id message.ID) error {
-	// TODO: move full message download elsewhere once we're tracking labels.
-	if nm.HaveMessage(id.PermID) {
-		return nil
+func handleUpdatedHeader(ctx context.Context, tx *persist.Tx, hdr *message.Header) error {
+	log.Printf("hdr %#v\n", hdr)
+	return tx.UpdateHeader(ctx, hdr)
+}
+
+func isNotFound(err error) bool {
+	// In practice the history list sometimes delivers messages
+	// that can't be fetched; ignore them.
+	//
+	// TODOD: Handle this more gracefully by generalizing a "not
+	// found" error in the MessageStorage interface?
+	switch err := errors.Cause(err).(type) {
+	case *googleapi.Error:
+		if err.Code == 404 {
+			return true
+		}
+	}
+	return false
+}
+
+func handleUpdatedMessage(ctx context.Context, tx *persist.Tx, g MessageStorage, nm *notmuch.Service, id message.ID) error {
+	// TODO: move full message download elsewhere?
+	haveBody := nm.HaveMessage(id.PermID)
+	if haveBody {
+		header, err := g.GetMessageHeader(ctx, id.PermID)
+		if isNotFound(err) {
+			return nil
+		}
+		if err != nil {
+			return errors.Wrapf(err, "from handleUpdatedMessage")
+		}
+		return handleUpdatedHeader(ctx, tx, header)
 	}
 	fullMsg, err := g.GetMessageFull(ctx, id.PermID)
 
 	// TODO: save history ID and label information here.
 
+	if isNotFound(err) {
+		return nil
+	}
 	if err != nil {
-		// In practice the history list sometimes delivers
-		// messages that can't be fetched; ignore them.
-		//
-		// TODOD: Handle this more gracefully by generalizing
-		// a "not found" error in the MessageStorage
-		// interface?
-		switch err := errors.Cause(err).(type) {
-		case *googleapi.Error:
-			if err.Code == 404 {
-				return nil
-			}
-		}
 		return errors.Wrapf(err, "failed getting message %v", id.PermID)
 	}
 	fmt.Println("Inserting ID", id.PermID, "HistoryID",
@@ -220,7 +234,7 @@ func handleOutdatedMessage(ctx context.Context, tx *persist.Tx, g MessageStorage
 	if err := nm.Insert(ctx, fullMsg); err != nil {
 		return err
 	}
-	return nil
+	return handleUpdatedHeader(ctx, tx, &fullMsg.Header)
 }
 
 func Sync(ctx context.Context, g MessageStorage, db *persist.DB, nm *notmuch.Service) error {
