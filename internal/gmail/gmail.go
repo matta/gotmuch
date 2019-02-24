@@ -34,14 +34,14 @@ const (
 	ReadonlyScope = gmail_api.GmailReadonlyScope
 
 	// See https://developers.google.com/gmail/api/v1/reference/quota
-	gmailQuotaUnitsMessagesGet     = 5
-	gmailQuotaUnitsPerGetProfile   = 2
-	gmailQuotaUnitsPerHistoryList  = 2
-	gmailQuotaUnitsPerMessagesList = 1
+	quotaUnitsMessagesGet     = 5
+	quotaUnitsPerGetProfile   = 2
+	quotaUnitsPerHistoryList  = 2
+	quotaUnitsPerMessagesList = 1
 
-	gmailQuotaUnitsPerSecond = 250
-	gmailRateLimitPerSecond  = gmailQuotaUnitsPerSecond / 2
-	gmailRateLimitBurst      = gmailQuotaUnitsPerSecond
+	quotaUnitsPerSecond = 250
+	rateLimitPerSecond  = quotaUnitsPerSecond / 2
+	rateLimitBurst      = quotaUnitsPerSecond
 )
 
 // GmailService provides access to messages stored in Google's GMail
@@ -56,12 +56,12 @@ func New(client *http.Client) (*GmailService, error) {
 	if err != nil {
 		return nil, err
 	}
-	l := rate.NewLimiter(gmailRateLimitPerSecond, gmailRateLimitBurst)
+	l := rate.NewLimiter(rateLimitPerSecond, rateLimitBurst)
 	return &GmailService{service: s, limiter: l}, nil
 }
 
 func (s *GmailService) ListAll(ctx context.Context, handler func(*message.ID) error) error {
-	if err := s.limiter.WaitN(ctx, gmailQuotaUnitsPerMessagesList); err != nil {
+	if err := s.limiter.WaitN(ctx, quotaUnitsPerMessagesList); err != nil {
 		return err
 	}
 	msgs := gmail.NewUsersMessagesService(s.service)
@@ -77,7 +77,7 @@ func (s *GmailService) ListAll(ctx context.Context, handler func(*message.ID) er
 			}
 		}
 		if page.NextPageToken != "" {
-			err = s.limiter.WaitN(ctx, gmailQuotaUnitsPerMessagesList)
+			err = s.limiter.WaitN(ctx, quotaUnitsPerMessagesList)
 		}
 		return
 	})
@@ -90,7 +90,7 @@ func (s *GmailService) ListAll(ctx context.Context, handler func(*message.ID) er
 
 func (s *GmailService) ListFrom(ctx context.Context, historyID uint64, handler func(*message.ID) error) error {
 	wait := func() error {
-		return s.limiter.WaitN(ctx, gmailQuotaUnitsPerHistoryList)
+		return s.limiter.WaitN(ctx, quotaUnitsPerHistoryList)
 	}
 	if err := wait(); err != nil {
 		return err
@@ -127,7 +127,7 @@ func (s *GmailService) ListFrom(ctx context.Context, historyID uint64, handler f
 }
 
 func (s *GmailService) GetMessageMeta(ctx context.Context, id string) (*message.Header, error) {
-	if err := s.limiter.WaitN(ctx, gmailQuotaUnitsMessagesGet); err != nil {
+	if err := s.limiter.WaitN(ctx, quotaUnitsMessagesGet); err != nil {
 		return nil, err
 	}
 	msg, err := gmail.NewUsersMessagesService(s.service).Get("me", id).
@@ -143,7 +143,7 @@ func (s *GmailService) GetMessageMeta(ctx context.Context, id string) (*message.
 }
 
 func (s *GmailService) GetMessageFull(ctx context.Context, id string) (*message.Body, error) {
-	if err := s.limiter.WaitN(ctx, gmailQuotaUnitsMessagesGet); err != nil {
+	if err := s.limiter.WaitN(ctx, quotaUnitsMessagesGet); err != nil {
 		return nil, err
 	}
 	msg, err := gmail.NewUsersMessagesService(s.service).Get("me", id).
@@ -166,7 +166,7 @@ func (s *GmailService) GetMessageFull(ctx context.Context, id string) (*message.
 }
 
 func (s *GmailService) GetProfile(ctx context.Context) (*message.Profile, error) {
-	if err := s.limiter.WaitN(ctx, gmailQuotaUnitsPerGetProfile); err != nil {
+	if err := s.limiter.WaitN(ctx, quotaUnitsPerGetProfile); err != nil {
 		return nil, err
 	}
 	u, err := gmail.NewUsersService(s.service).GetProfile("me").Context(ctx).Do()
