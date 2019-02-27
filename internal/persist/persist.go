@@ -20,6 +20,8 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"net/url"
+	"strings"
 	"time"
 
 	"marmstrong/gotmuch/internal/message"
@@ -155,21 +157,55 @@ type Tx struct {
 	tx *sql.Tx
 }
 
+func dsnFromPath(path string, addValues url.Values) (string, error) {
+	var u *url.URL
+	if !strings.HasPrefix(path, "file:") {
+		u = &url.URL{Scheme: "file", Path: path}
+	} else {
+		var err error
+		u, err = url.Parse(path)
+		if err != nil {
+			return "", err
+		}
+	}
+	values := u.Query()
+	for k, v := range addValues {
+		for _, item := range v {
+			values.Add(k, item)
+		}
+	}
+	u.RawQuery = values.Encode()
+	return u.String(), nil
+}
+
 func Open(ctx context.Context, path string) (*DB, error) {
-	// The _busy_timeout is a SQLite extension that controls how long SQLite will poll
-	// before giving up.  The default of 5 seconds is too short in practice, especially
-	// in slower debug builds; go with 5 minutes.
+	// The _busy_timeout is a SQLite extension that controls how
+	// long SQLite will poll before giving up.  The default of 5
+	// seconds is too short in practice, especially in slower
+	// debug builds; go with 5 minutes.
 	var busyTimeout = int(5*time.Minute) / int(time.Millisecond)
-	dsn := fmt.Sprintf("file:%s?_busy_timeout=%d", path, busyTimeout)
-	log.Println("opening database at", dsn)
+
+	dsn, err := dsnFromPath(path, url.Values{
+		"_busy_timeout": {fmt.Sprintf("%d", busyTimeout)}})
+	if err != nil {
+		return nil, errors.Wrapf(err,
+			"Open(%q) failed: could not form a DB DSN from "+
+				"the given path",
+			path)
+	}
+	log.Printf("opening database at %q\n", dsn)
 	db, err := sql.Open("sqlite3", dsn)
 	if err != nil {
-		return nil, errors.Wrapf(err, "could not open database at %s", dsn)
+		return nil, errors.Wrapf(err,
+			"Open(%q) failed: could not open database at %q",
+			path, dsn)
 	}
 
 	if err = initSchema(ctx, db); err != nil {
 		db.Close()
-		return nil, errors.Wrapf(err, "could not init database schema")
+		return nil, errors.Wrapf(err,
+			"Open(%q) failed: could not initialize the "+
+				"database schema", path)
 	}
 
 	return &DB{db}, nil
@@ -197,8 +233,9 @@ func (tx *Tx) Rollback() error {
 
 func initSchema(ctx context.Context, db *sql.DB) error {
 	for _, sql := range createTableSql {
+		log.Printf("SQL Exec: %q", sql)
 		if _, err := db.ExecContext(ctx, sql); err != nil {
-			return errors.Wrap(err, "could not create table")
+			return errors.Wrapf(err, "while executing %q", sql)
 		}
 	}
 
