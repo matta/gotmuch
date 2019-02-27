@@ -40,7 +40,7 @@ const (
 	quotaUnitsPerMessagesList = 1
 
 	quotaUnitsPerSecond = 250
-	rateLimitPerSecond  = quotaUnitsPerSecond / 2
+	rateLimitPerSecond  = quotaUnitsPerSecond * 0.8
 	rateLimitBurst      = quotaUnitsPerSecond
 )
 
@@ -65,7 +65,7 @@ func (s *GmailService) ListAll(ctx context.Context, handler func(*message.ID) er
 		return err
 	}
 	msgs := gmail.NewUsersMessagesService(s.service)
-	req := msgs.List("me").Q("{in:inbox is:sent} -is:chat") // XXX "in:all"
+	req := msgs.List("me").Q("{in:inbox} -is:chat") // XXX "in:all"
 	total := 0
 	err := req.Pages(ctx, func(page *gmail.ListMessagesResponse) (err error) {
 		total += len(page.Messages)

@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 
 	"marmstrong/gotmuch/internal/message"
 	"marmstrong/gotmuch/internal/notmuch"
@@ -28,6 +29,20 @@ import (
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/api/googleapi"
 )
+
+var (
+	// FIXME: stop hard coding this
+	fixmeUser string
+)
+
+func init() {
+	// FIXME: this is pretty bad.
+	var ok bool
+	fixmeUser, ok = os.LookupEnv("GOTMUCH_USER")
+	if !ok {
+		panic("GOTMUCH_USER environment must be set")
+	}
+}
 
 func listIds(ctx context.Context, historyId uint64, g MessageStorage, msgs chan<- *message.ID) error {
 	defer close(msgs)
@@ -63,7 +78,7 @@ func listIds(ctx context.Context, historyId uint64, g MessageStorage, msgs chan<
 
 func saveIds(ctx context.Context, tx *persist.Tx, ids <-chan *message.ID) error {
 	for id := range ids {
-		if err := tx.InsertMessageID(ctx, id); err != nil {
+		if err := tx.InsertMessageID(ctx, fixmeUser, id); err != nil {
 			return err
 		}
 	}
@@ -76,7 +91,7 @@ func pullAll(ctx context.Context, g MessageStorage, tx *persist.Tx) error {
 		return err
 	}
 	log.Println("Full sync to History ID", profile.HistoryID, "for", profile.EmailAddress)
-	err = tx.WriteHistoryID(ctx, profile.HistoryID)
+	err = tx.WriteHistoryID(ctx, fixmeUser, profile.HistoryID)
 	if err != nil {
 		return err
 	}
@@ -107,7 +122,7 @@ func pullIncremental(ctx context.Context, historyID uint64, g MessageStorage, tx
 	}
 
 	// TODO: can we trust this history ID here?
-	err = tx.WriteHistoryID(ctx, profile.HistoryID)
+	err = tx.WriteHistoryID(ctx, fixmeUser, profile.HistoryID)
 	if err != nil {
 		return err
 	}

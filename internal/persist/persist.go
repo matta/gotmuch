@@ -29,8 +29,9 @@ import (
 
 var (
 	createTableSql = []string{
-		// The gmail_messages table holds state for each
-		// message in the database.
+		`PRAGMA foreign_keys = ON;`,
+
+		// messages table holds state for each message.
 		//
 		// Field: message_id
 		//
@@ -86,13 +87,16 @@ var (
 		//   considered valid for the message_id for the life
 		//   of the database.
 		`
-CREATE TABLE IF NOT EXISTS gmail_messages (
-message_id TEXT NOT NULL UNIQUE,
+CREATE TABLE IF NOT EXISTS messages (
+account TEXT NOT NULL,
+message_id TEXT NOT NULL,
 thread_id TEXT NOT NULL,
 history_id INTEGER,
-size_estimate INTEGER
+size_estimate INTEGER,
+PRIMARY KEY (account, message_id)
 );`,
-		// The gmail_labels table maps label IDs to display name and
+
+		// The labels table maps label IDs to display name and
 		// type.
 		//
 		// Field: label_id
@@ -108,30 +112,34 @@ size_estimate INTEGER
 		//   GMail API: Users.labels resource "type"
 		//   Valid values are "system" or "user".
 		`
-CREATE TABLE IF NOT EXISTS gmail_labels (
-label_id TEXT NOT NULL UNIQUE,
-display_name TEXT NOT NULL,
-type TEXT NOT NULL
+CREATE TABLE IF NOT EXISTS labels (
+account TEXT NOT NULL,
+label_id TEXT NOT NULL,
+display_name TEXT,
+type TEXT CHECK (type IN (NULL, 'system', 'user')),
+PRIMARY KEY (account, label_id)
 );`,
-		// The gmail_message_labels table maps messages to labels.
+
+		// The message_labels table maps messages to labels.
 		//
 		//   Maps gmail message ID to a label_id.
 		//
 		// Field: message_id
 		//
-		//   As in gmail_messages.message_id.
+		//   As in messages.message_id.
 		//
 		// Field: label_id
 		//
-		//   As in gmail_labels.label_id.
+		//   As in labels.label_id.
 		`
-CREATE TABLE IF NOT EXISTS gmail_message_labels (
-message_id TEXT NOT NULL,
-label_id TEXT NOT NULL,
-PRIMARY KEY (message_id, label_id)
-FOREIGN KEY (message_id) REFERENCES gmail_messages (message_id)
-FOREIGN KEY (label_id) REFERENCES gmail_messages (label_id)
+CREATE TABLE IF NOT EXISTS message_labels (
+account TEXT NOT NULL,
+label_id TEXT REFERENCES labels (label_id),
+message_id TEXT REFERENCES messages (message_id),
+location TEXT CHECK (location IN ('local', 'remote', 'synchronized')),
+PRIMARY KEY (account, label_id, message_id)
 );`,
+
 		// The gmail_history_id table holds the GMail history ID for
 		// each successful full synchronizaton, either a complete call
 		// to Users.messages.list (catch up synchronizaton) or
@@ -146,7 +154,9 @@ FOREIGN KEY (label_id) REFERENCES gmail_messages (label_id)
 		// Users.messages.list call (catch up synchronization).
 		`
 CREATE TABLE IF NOT EXISTS gmail_history_id (
-history_id INTEGER NOT NULL UNIQUE,
+account TEXT NOT NULL,
+history_id INTEGER NOT NULL,
+PRIMARY KEY (account, history_id)
 );`,
 	}
 )
@@ -202,17 +212,17 @@ func (tx *Tx) Rollback() error {
 func initSchema(ctx context.Context, db *sql.DB) error {
 	for _, sql := range createTableSql {
 		if _, err := db.ExecContext(ctx, sql); err != nil {
-			return errors.Wrap(err, "could not create table")
+			return errors.Wrapf(err, "could not create table %q", sql)
 		}
 	}
 
 	return nil
 }
 
-func (tx *Tx) InsertMessageID(ctx context.Context, msg *message.ID) error {
-	sql := `INSERT OR REPLACE INTO gmail_messages
-		(message_id, thread_id) values ($1, $2)
-		ON CONFLICT (message_id)
+func (tx *Tx) InsertMessageID(ctx context.Context, account string, msg *message.ID) error {
+	sql := `INSERT OR REPLACE INTO messages
+		(account, message_id, thread_id) values ($1, $2, $3)
+		ON CONFLICT (account, message_id)
 		DO UPDATE SET (thread_id, history_id) = ($2, NULL)`
 	upsert, err := tx.tx.PrepareContext(ctx, sql)
 	if err != nil {
@@ -220,14 +230,14 @@ func (tx *Tx) InsertMessageID(ctx context.Context, msg *message.ID) error {
 	}
 	defer upsert.Close()
 
-	sql = `DELETE FROM gmail_message_labels WHERE message_id = $1`
+	sql = `DELETE FROM message_labels WHERE message_id = $1`
 	unlabel, err := tx.tx.PrepareContext(ctx, sql)
 	if err != nil {
 		return errors.Wrap(err, "db prepare statement failed for unlabel")
 	}
 	defer unlabel.Close()
 
-	if _, err = upsert.ExecContext(ctx, msg.PermID, msg.ThreadID); err != nil {
+	if _, err = upsert.ExecContext(ctx, account, msg.PermID, msg.ThreadID); err != nil {
 		return errors.Wrap(err, "db upsert failed")
 	}
 	if _, err = unlabel.ExecContext(ctx, msg.PermID); err != nil {
@@ -238,7 +248,7 @@ func (tx *Tx) InsertMessageID(ctx context.Context, msg *message.ID) error {
 
 func (tx *Tx) UpdateHeader(ctx context.Context, hdr *message.Header) error {
 	sql := `
-UPDATE gmail_messages SET (history_id, size_estimate) = ($1, $2)
+UPDATE messages SET (history_id, size_estimate) = ($1, $2)
 WHERE message_id = $3;
 `
 	history, err := tx.tx.PrepareContext(ctx, sql)
@@ -248,7 +258,7 @@ WHERE message_id = $3;
 	defer history.Close()
 
 	sql = `
-DELETE FROM gmail_message_labels WHERE message_id = $1
+DELETE FROM message_labels WHERE message_id = $1
 `
 	unlabel, err := tx.tx.PrepareContext(ctx, sql)
 	if err != nil {
@@ -257,7 +267,7 @@ DELETE FROM gmail_message_labels WHERE message_id = $1
 	defer unlabel.Close()
 
 	sql = `
-INSERT INTO gmail_message_labels (message_id, label_id) values ($1, $2)
+INSERT INTO message_labels (message_id, label_id) values ($1, $2)
 `
 	label, err := tx.tx.PrepareContext(ctx, sql)
 	if err != nil {
@@ -282,7 +292,7 @@ INSERT INTO gmail_message_labels (message_id, label_id) values ($1, $2)
 func (tx *Tx) ListUpdated(ctx context.Context, handler func(message.ID) error) error {
 	const sql = `
 SELECT message_id, thread_id
-FROM gmail_messages
+FROM messages
 WHERE history_id IS NULL
 `
 	rows, err := tx.tx.QueryContext(ctx, sql)
@@ -329,7 +339,7 @@ func (tx *Tx) LatestHistoryID(ctx context.Context) (uint64, error) {
 	return orderedToUnsigned(id), nil
 }
 
-func (tx *Tx) WriteHistoryID(ctx context.Context, history_id uint64) error {
+func (tx *Tx) WriteHistoryID(ctx context.Context, account string, history_id uint64) error {
 	latest, err := tx.LatestHistoryID(ctx)
 	if err != nil {
 		return err
@@ -338,8 +348,8 @@ func (tx *Tx) WriteHistoryID(ctx context.Context, history_id uint64) error {
 		return fmt.Errorf("attempt to decrease the latest history_id")
 	}
 
-	sql := `INSERT INTO gmail_history_id (history_id) values ($1)`
-	_, err = tx.tx.ExecContext(ctx, sql, orderedToSigned(history_id))
+	sql := `INSERT INTO gmail_history_id (account, history_id) values ($1, $2)`
+	_, err = tx.tx.ExecContext(ctx, sql, account, orderedToSigned(history_id))
 	if err != nil {
 		return errors.Wrap(err, "db insert failed")
 	}
