@@ -27,6 +27,126 @@ import (
 	"github.com/pkg/errors"
 )
 
+var (
+	createTableSql = []string{
+		// The gmail_messages table holds state for each message in
+		// the database.
+		//
+		// Field: message_id
+		//
+		//   GMail API: Users.messages resource "id" field, returned
+		//   by Users.messages.list and Users.messages.get (for all
+		//   formats).
+		//
+		//   Note: This is also exposed by GMail IMAP as the
+		//   X-GM-MSGID header, where it is documented as a uint64
+		//   integer encoded in hex.
+		//
+		// Field: thread_id
+		//
+		//   GMail API: Users.messages resource "threadId" field,
+		//   returned by Users.messages.list, Users.messages.get (for
+		//   all formats).
+		//
+		//   Note: This is also exposed by GMail IMAP as the
+		//   X-GM-THRID header, where it is documented as a uint64
+		//   integer encoded in hex.
+		//
+		// Field: history_id
+		//
+		//   GMail API: Users.messages resource "historyId" field,
+		//   returned by Users.messages.get for all formats.
+		//
+		//   Notes:
+		//
+		//   If NULL, no Users.messages.get has been performed
+		//   successfully for this message yet, or the message_id has
+		//   appeared in a Users.history.list response.
+		//
+		//   This field is set NULL for all messages before each GMail
+		//   API "list" call, and populated on the subsequent "get".
+		//   It is set NULL when a Users.history.list response
+		//   includes the message_id.
+		//
+		// Field: size_estimate
+		//
+		//   GMail API: Users.messages resource "sizeEstimate" field,
+		//   returned by Users.messages.get for all formats.
+		//
+		//   Notes:
+		//
+		//   If NULL, no Users.messages.get has been performed
+		//   successfully for this message yet.
+		//
+		//   This field is never set NULL.  Once fetched it is
+		//   considered valid for the message_id for the life of the
+		//   database.
+		`
+CREATE TABLE IF NOT EXISTS gmail_messages (
+message_id TEXT NOT NULL PRIMARY KEY,
+thread_id TEXT NOT NULL,
+history_id INTEGER,
+size_estimate INTEGER
+);`,
+		// The gmail_labels table maps label IDs to display name and
+		// type.
+		//
+		// Field: label_id
+		//
+		//   GMail API: Users.labels resource "id"
+		//
+		// Field: display_name
+		//
+		//   GMail API: Users.labels resource "name"
+		//
+		// Field: type
+		//
+		//   GMail API: Users.labels resource "type"
+		//   Valid values are "system" or "user".
+		`
+CREATE TABLE IF NOT EXISTS gmail_labels (
+label_id TEXT NOT NULL PRIMARY KEY,
+display_name TEXT NOT NULL,
+type TEXT NOT NULL
+);`,
+		// The gmail_message_labels table maps messages to labels.
+		//
+		//   Maps gmail message ID to a label_id.
+		//
+		// Field: message_id
+		//
+		//   As in gmail_messages.message_id.
+		//
+		// Field: label_id
+		//
+		//   As in gmail_labels.label_id.
+		`
+CREATE TABLE IF NOT EXISTS gmail_message_labels (
+message_id TEXT NOT NULL,
+label_id TEXT NOT NULL,
+PRIMARY KEY (message_id, label_id)
+FOREIGN KEY (message_id) REFERENCES gmail_messages (message_id)
+);`,
+		// The gmail_history_id table holds the GMail history ID for
+		// each successful full synchronizaton, either a complete call
+		// to Users.messages.list (catch up synchronizaton) or
+		// Users.history.list (incremental synchronizaton).
+		//
+		// Notes:
+		//
+		// The highest ID (sorted lexicographically) is the latest
+		// history ID for which history has been synchronized.
+		//
+		// All rows in this table are erased before each
+		// Users.messages.list call (catch up synchronization).
+		`
+CREATE TABLE IF NOT EXISTS gmail_history_id (
+history_id INTEGER NOT NULL,
+PRIMARY KEY (history_id)
+);`,
+	}
+)
+
 type DB struct {
 	db *sql.DB
 }
@@ -76,135 +196,10 @@ func (tx *Tx) Rollback() error {
 }
 
 func initSchema(ctx context.Context, db *sql.DB) error {
-	// The gmail_messages table holds state for each message in
-	// the database.
-	//
-	// Field: message_id
-	//
-	//   GMail API: Users.messages resource "id" field, returned
-	//   by Users.messages.list and Users.messages.get (for all
-	//   formats).
-	//
-	//   Note: This is also exposed by GMail IMAP as the
-	//   X-GM-MSGID header, where it is documented as a uint64
-	//   integer encoded in hex.
-	//
-	// Field: thread_id
-	//
-	//   GMail API: Users.messages resource "threadId" field,
-	//   returned by Users.messages.list, Users.messages.get (for
-	//   all formats).
-	//
-	//   Note: This is also exposed by GMail IMAP as the
-	//   X-GM-THRID header, where it is documented as a uint64
-	//   integer encoded in hex.
-	//
-	// Field: history_id
-	//
-	//   GMail API: Users.messages resource "historyId" field,
-	//   returned by Users.messages.get for all formats.
-	//
-	//   Notes:
-	//
-	//   If NULL, no Users.messages.get has been performed
-	//   successfully for this message yet, or the message_id has
-	//   appeared in a Users.history.list response.
-	//
-	//   This field is set NULL for all messages before each GMail
-	//   API "list" call, and populated on the subsequent "get".
-	//   It is set NULL when a Users.history.list response
-	//   includes the message_id.
-	//
-	// Field: size_estimate
-	//
-	//   GMail API: Users.messages resource "sizeEstimate" field,
-	//   returned by Users.messages.get for all formats.
-	//
-	//   Notes:
-	//
-	//   If NULL, no Users.messages.get has been performed
-	//   successfully for this message yet.
-	//
-	//   This field is never set NULL.  Once fetched it is
-	//   considered valid for the message_id for the life of the
-	//   database.
-	sql := `
-CREATE TABLE IF NOT EXISTS gmail_messages (
-message_id TEXT NOT NULL PRIMARY KEY,
-thread_id TEXT NOT NULL,
-history_id INTEGER,
-size_estimate INTEGER
-);`
-	if _, err := db.ExecContext(ctx, sql); err != nil {
-		return errors.Wrap(err, "could not create gmail_messages table")
-	}
-
-	// The gmail_labels table maps label IDs to display name and
-	// type.
-	//
-	// Field: label_id
-	//
-	//   GMail API: Users.labels resource "id"
-	//
-	// Field: display_name
-	//
-	//   GMail API: Users.labels resource "name"
-	//
-	// Field: type
-	//
-	//   GMail API: Users.labels resource "type"
-	//   Valid values are "system" or "user".
-	sql = `
-CREATE TABLE IF NOT EXISTS gmail_labels (
-label_id TEXT NOT NULL PRIMARY KEY,
-display_name TEXT NOT NULL,
-type TEXT NOT NULL
-);`
-	if _, err := db.ExecContext(ctx, sql); err != nil {
-		return errors.Wrap(err, "could not create gmail_labels table")
-	}
-
-	// The gmail_message_labels table maps messages to labels.
-	//
-	//   Maps gmail message ID to a label_id.
-	//
-	// Field: message_id
-	//
-	//   As in gmail_messages.message_id.
-	//
-	// Field: label_id
-	//
-	//   As in gmail_labels.label_id.
-	sql = `
-CREATE TABLE IF NOT EXISTS gmail_message_labels (
-message_id TEXT NOT NULL,
-label_id TEXT NOT NULL,
-PRIMARY KEY (message_id, label_id)
-FOREIGN KEY (message_id) REFERENCES gmail_messages (message_id)
-);`
-	if _, err := db.ExecContext(ctx, sql); err != nil {
-		return errors.Wrap(err, "could not create gmail_message_labels table")
-	}
-
-	// The gmail_history_id table holds the GMail history ID for
-	// each successful full synchronizaton, either a complete call
-	// to Users.messages.list (catch up synchronizaton) or
-	// Users.history.list (incremental synchronizaton).
-	//
-	// Notes:
-	//
-	// The highest ID (sorted lexicographically) is the latest
-	// history ID for which history has been synchronized.
-	//
-	// All rows in this table are erased before each
-	// Users.messages.list call (catch up synchronization).
-	sql = `
-CREATE TABLE IF NOT EXISTS gmail_history_id (
-history_id INTEGER NOT NULL,
-PRIMARY KEY (history_id)
-);`
-	if _, err := db.ExecContext(ctx, sql); err != nil {
-		return errors.Wrap(err, "could not create gmail_history_id table")
+	for _, sql := range createTableSql {
+		if _, err := db.ExecContext(ctx, sql); err != nil {
+			return errors.Wrap(err, "could not create table")
+		}
 	}
 
 	return nil
