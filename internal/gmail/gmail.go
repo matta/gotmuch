@@ -65,7 +65,7 @@ func (s *GmailService) ListAll(ctx context.Context, handler func(*message.ID) er
 		return err
 	}
 	msgs := gmail.NewUsersMessagesService(s.service)
-	req := msgs.List("me").Q("{in:inbox is:sent}") // XXX "in:all"
+	req := msgs.List("me").Q("{in:inbox is:sent} -is:chat") // XXX "in:all"
 	total := 0
 	err := req.Pages(ctx, func(page *gmail.ListMessagesResponse) (err error) {
 		total += len(page.Messages)
