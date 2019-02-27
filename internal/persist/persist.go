@@ -29,49 +29,53 @@ import (
 
 var (
 	createTableSql = []string{
-		// The gmail_messages table holds state for each message in
-		// the database.
+		// The gmail_messages table holds state for each
+		// message in the database.
 		//
 		// Field: message_id
 		//
-		//   GMail API: Users.messages resource "id" field, returned
-		//   by Users.messages.list and Users.messages.get (for all
-		//   formats).
+		//   GMail API: Users.messages resource "id" field,
+		//   returned by Users.messages.list and
+		//   Users.messages.get (for all formats).
 		//
 		//   Note: This is also exposed by GMail IMAP as the
-		//   X-GM-MSGID header, where it is documented as a uint64
-		//   integer encoded in hex.
+		//   X-GM-MSGID header, where it is documented as a
+		//   uint64 integer encoded in hex.
 		//
 		// Field: thread_id
 		//
-		//   GMail API: Users.messages resource "threadId" field,
-		//   returned by Users.messages.list, Users.messages.get (for
-		//   all formats).
+		//   GMail API: Users.messages resource "threadId"
+		//   field, returned by Users.messages.list,
+		//   Users.messages.get (for all formats).
 		//
 		//   Note: This is also exposed by GMail IMAP as the
-		//   X-GM-THRID header, where it is documented as a uint64
-		//   integer encoded in hex.
+		//   X-GM-THRID header, where it is documented as a
+		//   uint64 integer encoded in hex.
 		//
 		// Field: history_id
 		//
-		//   GMail API: Users.messages resource "historyId" field,
-		//   returned by Users.messages.get for all formats.
+		//   GMail API: Users.messages resource "historyId"
+		//   field, returned by Users.messages.get for all
+		//   formats.
 		//
 		//   Notes:
 		//
 		//   If NULL, no Users.messages.get has been performed
-		//   successfully for this message yet, or the message_id has
-		//   appeared in a Users.history.list response.
+		//   successfully for this message yet, or the
+		//   message_id has appeared in a Users.history.list
+		//   response.
 		//
-		//   This field is set NULL for all messages before each GMail
-		//   API "list" call, and populated on the subsequent "get".
-		//   It is set NULL when a Users.history.list response
-		//   includes the message_id.
+		//   This field is set NULL for all messages before
+		//   each GMail API "list" call, and populated on the
+		//   subsequent "get".  It is set NULL when a
+		//   Users.history.list response includes the
+		//   message_id.
 		//
 		// Field: size_estimate
 		//
-		//   GMail API: Users.messages resource "sizeEstimate" field,
-		//   returned by Users.messages.get for all formats.
+		//   GMail API: Users.messages resource "sizeEstimate"
+		//   field, returned by Users.messages.get for all
+		//   formats.
 		//
 		//   Notes:
 		//
@@ -79,11 +83,11 @@ var (
 		//   successfully for this message yet.
 		//
 		//   This field is never set NULL.  Once fetched it is
-		//   considered valid for the message_id for the life of the
-		//   database.
+		//   considered valid for the message_id for the life
+		//   of the database.
 		`
 CREATE TABLE IF NOT EXISTS gmail_messages (
-message_id TEXT NOT NULL PRIMARY KEY,
+message_id TEXT NOT NULL UNIQUE,
 thread_id TEXT NOT NULL,
 history_id INTEGER,
 size_estimate INTEGER
@@ -105,7 +109,7 @@ size_estimate INTEGER
 		//   Valid values are "system" or "user".
 		`
 CREATE TABLE IF NOT EXISTS gmail_labels (
-label_id TEXT NOT NULL PRIMARY KEY,
+label_id TEXT NOT NULL UNIQUE,
 display_name TEXT NOT NULL,
 type TEXT NOT NULL
 );`,
@@ -126,6 +130,7 @@ message_id TEXT NOT NULL,
 label_id TEXT NOT NULL,
 PRIMARY KEY (message_id, label_id)
 FOREIGN KEY (message_id) REFERENCES gmail_messages (message_id)
+FOREIGN KEY (label_id) REFERENCES gmail_messages (label_id)
 );`,
 		// The gmail_history_id table holds the GMail history ID for
 		// each successful full synchronizaton, either a complete call
@@ -141,8 +146,7 @@ FOREIGN KEY (message_id) REFERENCES gmail_messages (message_id)
 		// Users.messages.list call (catch up synchronization).
 		`
 CREATE TABLE IF NOT EXISTS gmail_history_id (
-history_id INTEGER NOT NULL,
-PRIMARY KEY (history_id)
+history_id INTEGER NOT NULL UNIQUE,
 );`,
 	}
 )
