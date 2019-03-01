@@ -211,8 +211,8 @@ func Open(ctx context.Context, path string) (*DB, error) {
 	return &DB{db}, nil
 }
 
-func (db *DB) Close() {
-	db.db.Close()
+func (db *DB) Close() error {
+	return db.db.Close()
 }
 
 func (db *DB) Begin(ctx context.Context) (*Tx, error) {
