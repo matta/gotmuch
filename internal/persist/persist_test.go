@@ -140,7 +140,7 @@ var (
 
 const (
 	inMemory fixtureMode = iota
-	temporaryOnDisk
+	onDisk
 )
 
 func runEachMode(t *testing.T, test func(t *testing.T, mode fixtureMode)) {
@@ -149,7 +149,7 @@ func runEachMode(t *testing.T, test func(t *testing.T, mode fixtureMode)) {
 		mode fixtureMode
 	}{
 		{"in memory", inMemory},
-		{"on disk", temporaryOnDisk},
+		{"on disk", onDisk},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -165,10 +165,10 @@ func createDBFixture(ctx context.Context, mode fixtureMode, t *testing.T) *dbFix
 
 	switch mode {
 	case inMemory:
-	case temporaryOnDisk:
 		inMemorySequence++
 		dsn = fmt.Sprintf("file:memory_db_%d?mode=memory&cache=shared",
 			inMemorySequence)
+	case onDisk:
 		tmpdir, err := ioutil.TempDir("", "test")
 		if err != nil {
 			t.Fatalf("ioutil.TempDir() error %v", err)
