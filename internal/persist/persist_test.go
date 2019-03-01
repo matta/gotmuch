@@ -185,6 +185,7 @@ func createDBFixture(ctx context.Context, mode fixtureMode, t *testing.T) *dbFix
 }
 
 func (f *dbFixture) CloseOrFatal() {
+	f.t.Helper()
 	defer func() {
 		if f.tmpdir == "" {
 			return
@@ -199,6 +200,7 @@ func (f *dbFixture) CloseOrFatal() {
 }
 
 func (f *dbFixture) BeginOrFatal(ctx context.Context) *Tx {
+	f.t.Helper()
 	tx, err := f.db.Begin(ctx)
 	if err != nil {
 		f.t.Fatalf("persist.DB.Begin() failes with error: %v", err)
