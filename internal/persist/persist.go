@@ -18,7 +18,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"log"
 	"math"
 	"net/url"
 	"strings"
@@ -193,7 +192,6 @@ func Open(ctx context.Context, path string) (*DB, error) {
 				"the given path",
 			path)
 	}
-	log.Printf("opening database at %q\n", dsn)
 	db, err := sql.Open("sqlite3", dsn)
 	if err != nil {
 		return nil, errors.Wrapf(err,
@@ -233,7 +231,6 @@ func (tx *Tx) Rollback() error {
 
 func initSchema(ctx context.Context, db *sql.DB) error {
 	for _, sql := range createTableSql {
-		log.Printf("SQL Exec: %q", sql)
 		if _, err := db.ExecContext(ctx, sql); err != nil {
 			return errors.Wrapf(err, "while executing %q", sql)
 		}
