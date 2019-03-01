@@ -60,7 +60,7 @@ func New(client *http.Client) (*GmailService, error) {
 	return &GmailService{service: s, limiter: l}, nil
 }
 
-func (s *GmailService) ListAll(ctx context.Context, handler func(*message.ID) error) error {
+func (s *GmailService) ListAll(ctx context.Context, handler func(message.ID) error) error {
 	if err := s.limiter.WaitN(ctx, quotaUnitsPerMessagesList); err != nil {
 		return err
 	}
@@ -71,7 +71,7 @@ func (s *GmailService) ListAll(ctx context.Context, handler func(*message.ID) er
 		total += len(page.Messages)
 		log.Printf("listed page of Gmail messages; count %d; total so far %d", len(page.Messages), total)
 		for _, msg := range page.Messages {
-			m := &message.ID{PermID: msg.Id, ThreadID: msg.ThreadId}
+			m := message.ID{PermID: msg.Id, ThreadID: msg.ThreadId}
 			if err := handler(m); err != nil {
 				return err
 			}
@@ -88,7 +88,7 @@ func (s *GmailService) ListAll(ctx context.Context, handler func(*message.ID) er
 	return err
 }
 
-func (s *GmailService) ListFrom(ctx context.Context, historyID uint64, handler func(*message.ID) error) error {
+func (s *GmailService) ListFrom(ctx context.Context, historyID uint64, handler func(message.ID) error) error {
 	wait := func() error {
 		return s.limiter.WaitN(ctx, quotaUnitsPerHistoryList)
 	}
@@ -105,7 +105,7 @@ func (s *GmailService) ListFrom(ctx context.Context, historyID uint64, handler f
 		for _, h := range page.History {
 			// TODO: handle labelAdded, labelRemoved, messageDeleted too.
 			for _, added := range h.MessagesAdded {
-				m := &message.ID{
+				m := message.ID{
 					PermID:   added.Message.Id,
 					ThreadID: added.Message.ThreadId,
 				}

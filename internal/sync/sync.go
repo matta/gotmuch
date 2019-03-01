@@ -29,11 +29,11 @@ import (
 	"google.golang.org/api/googleapi"
 )
 
-func listIds(ctx context.Context, historyId uint64, g MessageStorage, msgs chan<- *message.ID) error {
+func listIds(ctx context.Context, historyId uint64, g MessageStorage, msgs chan<- message.ID) error {
 	defer close(msgs)
 
 	if historyId == 0 {
-		err := g.ListAll(ctx, func(msg *message.ID) error {
+		err := g.ListAll(ctx, func(msg message.ID) error {
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
@@ -46,7 +46,7 @@ func listIds(ctx context.Context, historyId uint64, g MessageStorage, msgs chan<
 		}
 		return nil
 	}
-	err := g.ListFrom(ctx, historyId, func(msg *message.ID) error {
+	err := g.ListFrom(ctx, historyId, func(msg message.ID) error {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -61,7 +61,7 @@ func listIds(ctx context.Context, historyId uint64, g MessageStorage, msgs chan<
 
 }
 
-func saveIds(ctx context.Context, tx *persist.Tx, ids <-chan *message.ID) error {
+func saveIds(ctx context.Context, tx *persist.Tx, ids <-chan message.ID) error {
 	for id := range ids {
 		if err := tx.InsertMessageID(ctx, id); err != nil {
 			return err
@@ -82,7 +82,7 @@ func pullAll(ctx context.Context, g MessageStorage, tx *persist.Tx) error {
 	}
 
 	grp, ctx := errgroup.WithContext(ctx)
-	ids := make(chan *message.ID, 1000)
+	ids := make(chan message.ID, 1000)
 	grp.Go(func() error {
 		return listIds(ctx, 0, g, ids)
 	})
@@ -113,7 +113,7 @@ func pullIncremental(ctx context.Context, historyID uint64, g MessageStorage, tx
 	}
 
 	grp, ctx := errgroup.WithContext(ctx)
-	ids := make(chan *message.ID, 1000)
+	ids := make(chan message.ID, 1000)
 	grp.Go(func() error {
 		return listIds(ctx, historyID, g, ids)
 	})

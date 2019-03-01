@@ -242,7 +242,7 @@ func initSchema(ctx context.Context, db *sql.DB) error {
 	return nil
 }
 
-func (tx *Tx) InsertMessageID(ctx context.Context, msg *message.ID) error {
+func (tx *Tx) InsertMessageID(ctx context.Context, msg message.ID) error {
 	sql := `INSERT OR REPLACE INTO gmail_messages
 		(message_id, thread_id) values ($1, $2)
 		ON CONFLICT (message_id)
