@@ -288,6 +288,39 @@ func TestInsertMessageID(t *testing.T) {
 	runEachMode(t, testInsertMessageID)
 }
 
+func testUpdateHeader(t *testing.T, mode fixtureMode) {
+	ctx := context.Background()
+	fixture := createDBFixture(ctx, mode, t)
+	defer fixture.CloseOrFatal()
+
+	tx := fixture.BeginOrFatal(ctx)
+	id := message.ID{"m1", "t1"}
+	tx.InsertMessageID(ctx, id)
+
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("tx.Commit() error: %v", err)
+	}
+
+	tx = fixture.BeginOrFatal(ctx)
+	hdr := message.Header{
+		ID:           id,
+		LabelIDs:     []string{"label_a", "label_b"},
+		SizeEstimate: 1234,
+		HistoryID:    13579,
+	}
+	err := tx.UpdateHeader(ctx, &hdr)
+	if err != nil {
+		t.Fatalf("tx.UpdateHeader(%v) error: %v", hdr, err)
+	}
+
+	// TODO: add tests when persist gets an API to read these
+	// messages back.
+}
+
+func TestUpdateHeader(t *testing.T) {
+	runEachMode(t, testUpdateHeader)
+}
+
 func testHistoryID(t *testing.T, mode fixtureMode) {
 	ctx := context.Background()
 	fixture := createDBFixture(ctx, mode, t)
