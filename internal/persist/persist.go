@@ -334,10 +334,6 @@ WHERE history_id IS NULL
 	return nil
 }
 
-func formatId(id uint64) string {
-	return fmt.Sprintf("%016x", id)
-}
-
 func orderedToSigned(u uint64) int64 {
 	return int64(u - -math.MinInt64) // Imagine 0..255 -> -128..127
 }
