@@ -1,8 +1,14 @@
 #!/bin/sh
 
-# This codifies an incantation described at
-# https://github.com/golang/go/wiki/Modules#how-to-install-and-activate-module-support
-GO111MODULE=on
-export GO111MODULE
+# Disable modules.  TODO: try again after guru supports modules:
+# https://golang.org/issue/24661
+#
+# # Opt into Go modules.
+# # https://github.com/golang/go/wiki/Modules#how-to-install-and-activate-module-support
+# GO111MODULE=on
+#
+# Opt out of Go modules.
+GO111MODULE=off
 
-go build ./...
+export GO111MODULE
+go test ./... && go build ./...

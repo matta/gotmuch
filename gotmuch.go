@@ -65,6 +65,11 @@ func run() error {
 	if err != nil {
 		return errors.Wrap(err, "unable to synchronize")
 	}
+
+	err = db.Close()
+	if err != nil {
+		return errors.Wrap(err, "unable to close db")
+	}
 	return nil
 }
 

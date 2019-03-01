@@ -26,8 +26,8 @@ import (
 // MessageLister lists all message identifiers from a message storage
 // system.
 type MessageLister interface {
-	ListAll(ctx context.Context, handler func(*message.ID) error) error
-	ListFrom(ctx context.Context, historyId uint64, handler func(*message.ID) error) error
+	ListAll(ctx context.Context, handler func(message.ID) error) error
+	ListFrom(ctx context.Context, historyId uint64, handler func(message.ID) error) error
 }
 
 // MessageMetaGetter gets per message metadata from message storage

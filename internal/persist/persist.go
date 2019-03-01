@@ -18,8 +18,9 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"log"
 	"math"
+	"net/url"
+	"strings"
 	"time"
 
 	"marmstrong/gotmuch/internal/message"
@@ -32,6 +33,10 @@ var (
 		`PRAGMA foreign_keys = ON;`,
 
 		// messages table holds state for each message.
+		//
+		// Field: account
+		//
+		//   A GMail account name.
 		//
 		// Field: message_id
 		//
@@ -99,6 +104,10 @@ PRIMARY KEY (account, message_id)
 		// The labels table maps label IDs to display name and
 		// type.
 		//
+		// Field: account
+		//
+		//   A GMail account name.
+		//
 		// Field: label_id
 		//
 		//   GMail API: Users.labels resource "id"
@@ -124,20 +133,26 @@ PRIMARY KEY (account, label_id)
 		//
 		//   Maps gmail message ID to a label_id.
 		//
-		// Field: message_id
+		// Field: account
 		//
-		//   As in messages.message_id.
+		//   A GMail account name.
 		//
 		// Field: label_id
 		//
 		//   As in labels.label_id.
+		//
+		// Field: message_id
+		//
+		//   As in messages.message_id.
 		`
 CREATE TABLE IF NOT EXISTS message_labels (
 account TEXT NOT NULL,
-label_id TEXT REFERENCES labels (label_id),
-message_id TEXT REFERENCES messages (message_id),
+label_id TEXT,
+message_id TEXT,
 location TEXT CHECK (location IN ('local', 'remote', 'synchronized')),
-PRIMARY KEY (account, label_id, message_id)
+PRIMARY KEY (account, label_id, message_id),
+FOREIGN KEY (account, message_id) REFERENCES messages (account, message_id),
+FOREIGN KEY (account, label_id) REFERENCES labels (account, label_id)
 );`,
 
 		// The gmail_history_id table holds the GMail history ID for
@@ -169,28 +184,61 @@ type Tx struct {
 	tx *sql.Tx
 }
 
+func dsnFromPath(path string, addValues url.Values) (string, error) {
+	var u *url.URL
+	if !strings.HasPrefix(path, "file:") {
+		u = &url.URL{Scheme: "file", Path: path}
+	} else {
+		var err error
+		u, err = url.Parse(path)
+		if err != nil {
+			return "", err
+		}
+	}
+	values := u.Query()
+	for k, v := range addValues {
+		for _, item := range v {
+			values.Add(k, item)
+		}
+	}
+	u.RawQuery = values.Encode()
+	return u.String(), nil
+}
+
 func Open(ctx context.Context, path string) (*DB, error) {
-	// The _busy_timeout is a SQLite extension that controls how long SQLite will poll
-	// before giving up.  The default of 5 seconds is too short in practice, especially
-	// in slower debug builds; go with 5 minutes.
+	// The _busy_timeout is a SQLite extension that controls how
+	// long SQLite will poll before giving up.  The default of 5
+	// seconds is too short in practice, especially in slower
+	// debug builds; go with 5 minutes.
 	var busyTimeout = int(5*time.Minute) / int(time.Millisecond)
-	dsn := fmt.Sprintf("file:%s?_busy_timeout=%d", path, busyTimeout)
-	log.Println("opening database at", dsn)
+
+	dsn, err := dsnFromPath(path, url.Values{
+		"_busy_timeout": {fmt.Sprintf("%d", busyTimeout)}})
+	if err != nil {
+		return nil, errors.Wrapf(err,
+			"Open(%q) failed: could not form a DB DSN from "+
+				"the given path",
+			path)
+	}
 	db, err := sql.Open("sqlite3", dsn)
 	if err != nil {
-		return nil, errors.Wrapf(err, "could not open database at %s", dsn)
+		return nil, errors.Wrapf(err,
+			"Open(%q) failed: could not open database at %q",
+			path, dsn)
 	}
 
 	if err = initSchema(ctx, db); err != nil {
 		db.Close()
-		return nil, errors.Wrapf(err, "could not init database schema")
+		return nil, errors.Wrapf(err,
+			"Open(%q) failed: could not initialize the "+
+				"database schema", path)
 	}
 
 	return &DB{db}, nil
 }
 
-func (db *DB) Close() {
-	db.db.Close()
+func (db *DB) Close() error {
+	return db.db.Close()
 }
 
 func (db *DB) Begin(ctx context.Context) (*Tx, error) {
@@ -212,92 +260,84 @@ func (tx *Tx) Rollback() error {
 func initSchema(ctx context.Context, db *sql.DB) error {
 	for _, sql := range createTableSql {
 		if _, err := db.ExecContext(ctx, sql); err != nil {
-			return errors.Wrapf(err, "could not create table %q", sql)
+			return errors.Wrapf(err, "while executing %q", sql)
 		}
 	}
 
 	return nil
 }
 
-func (tx *Tx) InsertMessageID(ctx context.Context, account string, msg *message.ID) error {
-	sql := `INSERT OR REPLACE INTO messages
-		(account, message_id, thread_id) values ($1, $2, $3)
-		ON CONFLICT (account, message_id)
-		DO UPDATE SET (thread_id, history_id) = ($2, NULL)`
-	upsert, err := tx.tx.PrepareContext(ctx, sql)
+func (tx *Tx) exec(ctx context.Context, query string, args ...interface{}) error {
+	// fmt.Printf("XXX exec(%q) using %#v\n", query, args)
+	_, err := tx.tx.ExecContext(ctx, query, args...)
 	if err != nil {
-		return errors.Wrap(err, "db prepare statement failed for messages upsert")
+		return errors.Wrapf(err, "db error executing %q with %#v", query, args)
 	}
-	defer upsert.Close()
+	return err
+}
 
-	sql = `DELETE FROM message_labels WHERE message_id = $1`
-	unlabel, err := tx.tx.PrepareContext(ctx, sql)
-	if err != nil {
-		return errors.Wrap(err, "db prepare statement failed for unlabel")
-	}
-	defer unlabel.Close()
+func (tx *Tx) query(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error) {
+	// fmt.Printf("XXX query(%q) using %#v\n", query, args)
+	rows, err := tx.tx.QueryContext(ctx, query, args...)
+	return rows, errors.Wrapf(err, "db error executing %q with %#v", query, args)
+}
 
-	if _, err = upsert.ExecContext(ctx, account, msg.PermID, msg.ThreadID); err != nil {
-		return errors.Wrap(err, "db upsert failed")
+func (tx *Tx) InsertMessageID(ctx context.Context, account string, msg message.ID) error {
+	query := `
+INSERT OR REPLACE INTO messages
+(account, message_id, thread_id) values ($1, $2, $3)
+ON CONFLICT (account, message_id)
+DO UPDATE SET (thread_id, history_id) = ($3, NULL)
+`
+	if err := tx.exec(ctx, query, account, msg.PermID, msg.ThreadID); err != nil {
+		return err
 	}
-	if _, err = unlabel.ExecContext(ctx, msg.PermID); err != nil {
-		return errors.Wrap(err, "db unlabel failed")
+
+	query = `
+DELETE FROM message_labels WHERE account = $1 AND message_id = $2
+`
+	if err := tx.exec(ctx, query, account, msg.PermID); err != nil {
+		return err
 	}
+
 	return nil
 }
 
-func (tx *Tx) UpdateHeader(ctx context.Context, hdr *message.Header) error {
-	sql := `
-UPDATE messages SET (history_id, size_estimate) = ($1, $2)
-WHERE message_id = $3;
-`
-	history, err := tx.tx.PrepareContext(ctx, sql)
-	if err != nil {
-		return errors.Wrap(err, "db prepare statement failed for UpdateHeader")
+func (tx *Tx) UpdateHeader(ctx context.Context, account string, hdr *message.Header) error {
+	sql := `UPDATE messages SET (history_id, size_estimate) = ($3, $4) ` +
+		`WHERE account = $1 AND message_id = $2;`
+	if err := tx.exec(ctx, sql, account, hdr.ID.PermID, hdr.HistoryID, hdr.SizeEstimate); err != nil {
+		return err
 	}
-	defer history.Close()
 
-	sql = `
-DELETE FROM message_labels WHERE message_id = $1
-`
-	unlabel, err := tx.tx.PrepareContext(ctx, sql)
-	if err != nil {
-		return errors.Wrap(err, "db prepare statement failed for unlabel")
+	sql = `DELETE FROM message_labels WHERE account = $1 AND message_id = $2;`
+	if err := tx.exec(ctx, sql, account, hdr.ID.PermID); err != nil {
+		return err
 	}
-	defer unlabel.Close()
 
-	sql = `
-INSERT INTO message_labels (message_id, label_id) values ($1, $2)
-`
-	label, err := tx.tx.PrepareContext(ctx, sql)
-	if err != nil {
-		return errors.Wrap(err, "db prepare statement failed for unlabel")
-	}
-	defer label.Close()
-
-	if _, err = history.ExecContext(ctx, hdr.HistoryID, hdr.SizeEstimate, hdr.ID.PermID); err != nil {
-		return errors.Wrap(err, "UpdateHeader")
-	}
-	if _, err = unlabel.ExecContext(ctx, hdr.ID.PermID); err != nil {
-		return errors.Wrap(err, "UpdateHeader")
-	}
 	for _, labelID := range hdr.LabelIDs {
-		if _, err = label.ExecContext(ctx, hdr.ID.PermID, labelID); err != nil {
-			return errors.Wrap(err, "UpdateHeader")
+		sql = `INSERT OR IGNORE INTO labels (account, label_id) values ($1, $2)`
+		if err := tx.exec(ctx, sql, account, labelID); err != nil {
+			return err
+		}
+
+		sql = `INSERT INTO message_labels (account, message_id, label_id) values ($1, $2, $3);`
+		if err := tx.exec(ctx, sql, account, hdr.ID.PermID, labelID); err != nil {
+			return err
 		}
 	}
 	return nil
 }
 
-func (tx *Tx) ListUpdated(ctx context.Context, handler func(message.ID) error) error {
+func (tx *Tx) ListUpdated(ctx context.Context, account string, handler func(message.ID) error) error {
 	const sql = `
 SELECT message_id, thread_id
 FROM messages
-WHERE history_id IS NULL
+WHERE account == $1 AND history_id IS NULL
 `
-	rows, err := tx.tx.QueryContext(ctx, sql)
+	rows, err := tx.query(ctx, sql, account)
 	if err != nil {
-		return errors.Wrap(err, "db prepare statement failed in ListOutdatedHeaders")
+		return err
 	}
 	defer rows.Close()
 
@@ -312,10 +352,6 @@ WHERE history_id IS NULL
 		}
 	}
 	return nil
-}
-
-func formatId(id uint64) string {
-	return fmt.Sprintf("%016x", id)
 }
 
 func orderedToSigned(u uint64) int64 {
