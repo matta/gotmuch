@@ -176,6 +176,7 @@ func createDBFixture(ctx context.Context, mode fixtureMode, t *testing.T) *dbFix
 		dsn = filepath.Join(tmpdir, "db")
 	}
 
+	t.Logf("Database is %q", dsn)
 	db, err := Open(ctx, dsn)
 	if err != nil {
 		os.RemoveAll(tmpdir)
@@ -214,12 +215,18 @@ func RollbackOrFatal(t *testing.T, tx *Tx) {
 	}
 }
 
-func (f *dbFixture) ListUpdated(ctx context.Context) map[string]message.ID {
+func CommitOrFatal(t *testing.T, tx *Tx) {
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("tx.Commit() error %v", err)
+	}
+}
+
+func (f *dbFixture) ListUpdated(ctx context.Context, account string) map[string]message.ID {
 	tx := f.BeginOrFatal(ctx)
 	defer RollbackOrFatal(f.t, tx)
 
 	m := map[string]message.ID{}
-	err := tx.ListUpdated(ctx, func(id message.ID) error {
+	err := tx.ListUpdated(ctx, account, func(id message.ID) error {
 		_, ok := m[id.PermID]
 		if ok {
 			f.t.Errorf("persist.Tx.ListUpdated() returned duplicate message.ID %#v", id)
@@ -255,9 +262,7 @@ func testBeginCommit(t *testing.T, mode fixtureMode) {
 	fixture := createDBFixture(ctx, mode, t)
 	defer fixture.CloseOrFatal()
 	tx := fixture.BeginOrFatal(ctx)
-	if err := tx.Commit(); err != nil {
-		t.Fatalf("tx.Commit() error: %v", err)
-	}
+	CommitOrFatal(t, tx)
 }
 func TestBeginCommit(t *testing.T) {
 	runEachMode(t, testBeginCommit)
@@ -268,15 +273,21 @@ func testInsertMessageID(t *testing.T, mode fixtureMode) {
 	fixture := createDBFixture(ctx, mode, t)
 	defer fixture.CloseOrFatal()
 
+	const account = "account"
 	tx := fixture.BeginOrFatal(ctx)
-	tx.InsertMessageID(ctx, message.ID{"m1", "t1"})
-	tx.InsertMessageID(ctx, message.ID{"m2", "t2"})
-	tx.InsertMessageID(ctx, message.ID{"m1", "t1"})
-	if err := tx.Commit(); err != nil {
-		t.Fatalf("tx.Commit() error: %v", err)
+	defer tx.Rollback()
+	for _, msg := range []message.ID{
+		message.ID{"m1", "t1"},
+		message.ID{"m2", "t2"},
+		message.ID{"m1", "t1"},
+	} {
+		if err := tx.InsertMessageID(ctx, account, msg); err != nil {
+			t.Fatalf("tx.InsertMessageID() error: %+v", err)
+		}
 	}
+	CommitOrFatal(t, tx)
 
-	got := fixture.ListUpdated(ctx)
+	got := fixture.ListUpdated(ctx, account)
 	want := map[string]message.ID{"m1": {"m1", "t1"}, "m2": {"m2", "t2"}}
 	if !cmp.Equal(got, want) {
 		t.Errorf("persist.Tx.ListUpdated() = %v, want %v, diff %s",
@@ -294,24 +305,25 @@ func testUpdateHeader(t *testing.T, mode fixtureMode) {
 	defer fixture.CloseOrFatal()
 
 	tx := fixture.BeginOrFatal(ctx)
+	defer tx.Rollback()
 	id := message.ID{"m1", "t1"}
-	tx.InsertMessageID(ctx, id)
-
-	if err := tx.Commit(); err != nil {
-		t.Fatalf("tx.Commit() error: %v", err)
-	}
+	const account = "account"
+	tx.InsertMessageID(ctx, account, id)
+	CommitOrFatal(t, tx)
 
 	tx = fixture.BeginOrFatal(ctx)
+	defer tx.Rollback()
 	hdr := message.Header{
 		ID:           id,
 		LabelIDs:     []string{"label_a", "label_b"},
 		SizeEstimate: 1234,
 		HistoryID:    13579,
 	}
-	err := tx.UpdateHeader(ctx, &hdr)
+	err := tx.UpdateHeader(ctx, account, &hdr)
 	if err != nil {
-		t.Fatalf("tx.UpdateHeader(%v) error: %v", hdr, err)
+		t.Fatalf("tx.UpdateHeader(%v) error: %+v", hdr, err)
 	}
+	CommitOrFatal(t, tx)
 
 	// TODO: add tests when persist gets an API to read these
 	// messages back.
@@ -339,17 +351,14 @@ func testHistoryID(t *testing.T, mode fixtureMode) {
 	}
 
 	const fakeID = 12345
-	err = tx.WriteHistoryID(ctx, fakeID)
+	err = tx.WriteHistoryID(ctx, "account", fakeID)
 	if err != nil {
 		t.Fatalf("WriteHistoryID() unexpected error: %v", err)
 	}
-
-	err = tx.Commit()
-	if err != nil {
-		t.Fatalf("Commit() unexpected error: %v", err)
-	}
+	CommitOrFatal(t, tx)
 
 	tx = fixture.BeginOrFatal(ctx)
+	defer RollbackOrFatal(t, tx)
 	id, err = tx.LatestHistoryID(ctx)
 	if err != nil {
 		t.Fatalf("LatestHistoryID() unexpected error: %v", err)
@@ -357,7 +366,6 @@ func testHistoryID(t *testing.T, mode fixtureMode) {
 	if id != fakeID {
 		t.Errorf("LatestHistoryID() = %d, want %d", id, fakeID)
 	}
-	RollbackOrFatal(t, tx)
 }
 
 func TestHistoryID(t *testing.T) {

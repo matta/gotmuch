@@ -44,7 +44,7 @@ func init() {
 	}
 }
 
-func listIds(ctx context.Context, historyId uint64, g MessageStorage, msgs chan<- *message.ID) error {
+func listIds(ctx context.Context, historyId uint64, g MessageStorage, msgs chan<- message.ID) error {
 	defer close(msgs)
 
 	if historyId == 0 {
@@ -167,7 +167,7 @@ func pullDownload(ctx context.Context, g MessageStorage, db *persist.DB, nm *not
 
 	grp.Go(func() error {
 		defer close(ids)
-		return tx.ListUpdated(ctx, func(id message.ID) error {
+		return tx.ListUpdated(ctx, fixmeUser, func(id message.ID) error {
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
@@ -203,8 +203,7 @@ func pullDownload(ctx context.Context, g MessageStorage, db *persist.DB, nm *not
 }
 
 func handleUpdatedHeader(ctx context.Context, tx *persist.Tx, hdr *message.Header) error {
-	log.Printf("hdr %#v\n", hdr)
-	return tx.UpdateHeader(ctx, hdr)
+	return tx.UpdateHeader(ctx, fixmeUser, hdr)
 }
 
 func isNotFound(err error) bool {
