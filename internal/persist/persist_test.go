@@ -16,6 +16,7 @@ package persist
 
 import (
 	"context"
+	"fmt"
 	"io/ioutil"
 	"marmstrong/gotmuch/internal/message"
 	"math"
@@ -133,6 +134,10 @@ type dbFixture struct {
 
 type fixtureMode int
 
+var (
+	inMemorySequence int
+)
+
 const (
 	inMemory fixtureMode = iota
 	temporaryOnDisk
@@ -160,8 +165,10 @@ func createDBFixture(ctx context.Context, mode fixtureMode, t *testing.T) *dbFix
 
 	switch mode {
 	case inMemory:
-		dsn = "file::memory:?mode=memory&cache=shared"
 	case temporaryOnDisk:
+		inMemorySequence++
+		dsn = fmt.Sprintf("file:memory_db_%d?mode=memory&cache=shared",
+			inMemorySequence)
 		tmpdir, err := ioutil.TempDir("", "test")
 		if err != nil {
 			t.Fatalf("ioutil.TempDir() error %v", err)
