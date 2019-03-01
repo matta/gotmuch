@@ -17,12 +17,14 @@ package persist
 import (
 	"context"
 	"io/ioutil"
+	"marmstrong/gotmuch/internal/message"
 	"math"
 	"net/url"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
 	_ "github.com/mattn/go-sqlite3"
 )
 
@@ -123,7 +125,7 @@ func TestDSN(t *testing.T) {
 	}
 }
 
-type fixture struct {
+type dbFixture struct {
 	t      *testing.T
 	tmpdir string
 	db     *DB
@@ -136,7 +138,22 @@ const (
 	temporaryOnDisk
 )
 
-func createFixture(ctx context.Context, mode fixtureMode, t *testing.T) *fixture {
+func runEachMode(t *testing.T, test func(t *testing.T, mode fixtureMode)) {
+	cases := []struct {
+		name string
+		mode fixtureMode
+	}{
+		{"in memory", inMemory},
+		{"on disk", temporaryOnDisk},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			test(t, c.mode)
+		})
+	}
+}
+
+func createDBFixture(ctx context.Context, mode fixtureMode, t *testing.T) *dbFixture {
 	t.Helper()
 	var tmpdir string
 	var dsn string
@@ -157,20 +174,150 @@ func createFixture(ctx context.Context, mode fixtureMode, t *testing.T) *fixture
 		os.RemoveAll(tmpdir)
 		t.Fatalf("persist.Open(%q) error %v", dsn, err)
 	}
-	return &fixture{t, tmpdir, db}
+	return &dbFixture{t, tmpdir, db}
 }
 
-func (f *fixture) Close() {
-	f.db.Close()
-	if f.tmpdir == "" {
-		return
-	}
-	if err := os.RemoveAll(f.tmpdir); err != nil {
-		f.t.Fatalf("os.RemoveAll(%q) error %v", f.tmpdir, err)
+func (f *dbFixture) CloseOrFatal() {
+	defer func() {
+		if f.tmpdir == "" {
+			return
+		}
+		if err := os.RemoveAll(f.tmpdir); err != nil {
+			f.t.Fatalf("os.RemoveAll(%q) error %v", f.tmpdir, err)
+		}
+	}()
+	if err := f.db.Close(); err != nil {
+		f.t.Errorf("db.Close() error: %v", err)
 	}
 }
 
-func TestFixture(t *testing.T) {
-	createFixture(context.Background(), inMemory, t).Close()
-	createFixture(context.Background(), temporaryOnDisk, t).Close()
+func (f *dbFixture) BeginOrFatal(ctx context.Context) *Tx {
+	tx, err := f.db.Begin(ctx)
+	if err != nil {
+		f.t.Fatalf("persist.DB.Begin() failes with error: %v", err)
+	}
+	return tx
+}
+
+func RollbackOrFatal(t *testing.T, tx *Tx) {
+	if err := tx.Rollback(); err != nil {
+		t.Fatalf("tx.Rollback() error %v", err)
+	}
+}
+
+func (f *dbFixture) ListUpdated(ctx context.Context) map[string]message.ID {
+	tx := f.BeginOrFatal(ctx)
+	defer RollbackOrFatal(f.t, tx)
+
+	m := map[string]message.ID{}
+	err := tx.ListUpdated(ctx, func(id message.ID) error {
+		_, ok := m[id.PermID]
+		if ok {
+			f.t.Errorf("persist.Tx.ListUpdated() returned duplicate message.ID %#v", id)
+			return nil
+		}
+		m[id.PermID] = id
+		return nil
+	})
+	if err != nil {
+		f.t.Fatalf("persist.Tx.ListUpdated() fails with error: %v", err)
+	}
+	return m
+}
+
+func TestDBFixture(t *testing.T) {
+	runEachMode(t, func(t *testing.T, mode fixtureMode) {
+		createDBFixture(context.Background(), mode, t).CloseOrFatal()
+	})
+}
+
+func TestBeginRollback(t *testing.T) {
+	runEachMode(t, func(t *testing.T, mode fixtureMode) {
+		ctx := context.Background()
+		fixture := createDBFixture(ctx, mode, t)
+		tx := fixture.BeginOrFatal(ctx)
+		defer fixture.CloseOrFatal()
+		RollbackOrFatal(t, tx)
+	})
+}
+
+func testBeginCommit(t *testing.T, mode fixtureMode) {
+	ctx := context.Background()
+	fixture := createDBFixture(ctx, mode, t)
+	defer fixture.CloseOrFatal()
+	tx := fixture.BeginOrFatal(ctx)
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("tx.Commit() error: %v", err)
+	}
+}
+func TestBeginCommit(t *testing.T) {
+	runEachMode(t, testBeginCommit)
+}
+
+func testInsertMessageID(t *testing.T, mode fixtureMode) {
+	ctx := context.Background()
+	fixture := createDBFixture(ctx, mode, t)
+	defer fixture.CloseOrFatal()
+
+	tx := fixture.BeginOrFatal(ctx)
+	tx.InsertMessageID(ctx, message.ID{"m1", "t1"})
+	tx.InsertMessageID(ctx, message.ID{"m2", "t2"})
+	tx.InsertMessageID(ctx, message.ID{"m1", "t1"})
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("tx.Commit() error: %v", err)
+	}
+
+	got := fixture.ListUpdated(ctx)
+	want := map[string]message.ID{"m1": {"m1", "t1"}, "m2": {"m2", "t2"}}
+	if !cmp.Equal(got, want) {
+		t.Errorf("persist.Tx.ListUpdated() = %v, want %v, diff %s",
+			got, want, cmp.Diff(got, want))
+	}
+}
+
+func TestInsertMessageID(t *testing.T) {
+	runEachMode(t, testInsertMessageID)
+}
+
+func testHistoryID(t *testing.T, mode fixtureMode) {
+	ctx := context.Background()
+	fixture := createDBFixture(ctx, mode, t)
+	defer fixture.CloseOrFatal()
+
+	tx := fixture.BeginOrFatal(ctx)
+	id, err := tx.LatestHistoryID(ctx)
+	if err != nil {
+		t.Fatalf("persist.Tx.LatestHistoryID() "+
+			"unexpected error: %v", err)
+	}
+	if id != 0 {
+		t.Errorf("persist.Tx.LatestHistoryID() = %v"+
+			", want 0 (because no prior historyID"+
+			"has been commited)", id)
+	}
+
+	const fakeID = 12345
+	err = tx.WriteHistoryID(ctx, fakeID)
+	if err != nil {
+		t.Fatalf("WriteHistoryID() unexpected error: %v", err)
+	}
+
+	err = tx.Commit()
+	if err != nil {
+		t.Fatalf("Commit() unexpected error: %v", err)
+	}
+
+	tx = fixture.BeginOrFatal(ctx)
+	id, err = tx.LatestHistoryID(ctx)
+	if err != nil {
+		t.Fatalf("LatestHistoryID() unexpected error: %v", err)
+	}
+	if id != fakeID {
+		t.Errorf("LatestHistoryID() = %d, want %d", id, fakeID)
+	}
+	RollbackOrFatal(t, tx)
+}
+
+func TestHistoryID(t *testing.T) {
+	runEachMode(t, testHistoryID)
 }
