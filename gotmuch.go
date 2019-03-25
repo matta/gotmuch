@@ -20,7 +20,6 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"runtime/pprof"
 
 	"marmstrong/gotmuch/internal/gmail"
 	"marmstrong/gotmuch/internal/gmailhttp"
@@ -77,17 +76,6 @@ func run() error {
 
 func main() {
 	flag.Parse()
-	if *cpuProfile != "" {
-		f, err := os.Create(*cpuProfile)
-		if err != nil {
-			log.Fatal("could not create CPU profile: ", err)
-		}
-		defer f.Close()
-		if err := pprof.StartCPUProfile(f); err != nil {
-			log.Fatal("could not start CPU profile: ", err)
-		}
-		defer pprof.StopCPUProfile()
-	}
 	if *flagTrace {
 		tracehttp.WrapDefaultTransport()
 	}
