@@ -18,16 +18,15 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"net/http"
 	"os"
 
+	"marmstrong/gotmuch/internal/gmail"
 	"marmstrong/gotmuch/internal/message"
 	"marmstrong/gotmuch/internal/notmuch"
 	"marmstrong/gotmuch/internal/persist"
 
 	"github.com/pkg/errors"
 	"golang.org/x/sync/errgroup"
-	"google.golang.org/api/googleapi"
 )
 
 var (
@@ -207,64 +206,11 @@ func handleUpdatedHeader(ctx context.Context, tx *persist.Tx, hdr *message.Heade
 }
 
 func isNotFound(err error) bool {
-	// Ignore "Not Found" errors when fetching messages.
-	//
-	// GMail sometimes uses internal (phantom) messages in a
-	// user's mailbox for somethings (calendar invites?).  These
-	// are visible in some Gmail APIs such as Users.history.list.
-	// Accordinly, we must handle 404 errors when retrieving them
-	// with Users.messages.get.
-	//
-	// More information:
-	// https://issuetracker.google.com/issues/76185867
-	// https://issuetracker.google.com/issues/118714982
-	// https://issuetracker.google.com/issues/122167541
-	//
-	// TODO: try including "messageDeleted" in the
-	// Users.history.list call, and avoiding calling
-	// Users.messages.get for those.  See
-	// https://stackoverflow.com/questions/42098553/gmail-api-returns-404-error-when-calling-message-get,
-	// which suggests that a history list call can return
-	// "messageAdded", "labelAdded" and "labelRemoved" updates for
-	// messages that are later deleted.
-	//
-	// Observation: Programs should be resilient to "Not Found"
-	// regardless.  A call to Users.history.list followed by a
-	// series of Users.messages.get calls is not an atomic
-	// operation.  A message can be deleted at any time for a
-	// variety of reasons (e.g. messages in the trash expiring,
-	// calls to Users.messages.delete).
-	//
-	// The error response JSON we're trying to match is this:
-	//
-	// {
-	//   "error": {
-	//     "errors": [
-	//       {
-	//         "domain": "global",
-	//         "reason": "notFound",
-	//         "message": "Not Found"
-	//       }
-	//     ],
-	//     "code": 404,
-	//     "message": "Not Found"
-	//   }
-	// }
+	// Ignore "Message Not Found" errors when fetching messages.
 	//
 	// TODOD: Handle this more gracefully by generalizing a "not
 	// found" error in the MessageStorage interface?
-	switch err := errors.Cause(err).(type) {
-	case *googleapi.Error:
-		if err.Code == http.StatusNotFound {
-			for _, item := range err.Errors {
-				if item.Reason == "notFound" {
-					log.Printf("Warning: message not found...")
-					return true
-				}
-			}
-		}
-	}
-	return false
+	return errors.Cause(err) == gmail.ErrMessageNotFound
 }
 
 func handleUpdatedMessage(ctx context.Context, tx *persist.Tx, g MessageStorage, nm *notmuch.Service, id message.ID) error {

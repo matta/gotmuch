@@ -26,6 +26,7 @@ import (
 	"golang.org/x/time/rate"
 	"google.golang.org/api/gmail/v1"
 	gmail_api "google.golang.org/api/gmail/v1"
+	"google.golang.org/api/googleapi"
 )
 
 // "google3/util/time/go/rate"
@@ -44,11 +45,89 @@ const (
 	rateLimitBurst      = quotaUnitsPerSecond
 )
 
+var (
+	ErrMessageNotFound = errors.New("gmail message not found")
+)
+
 // GmailService provides access to messages stored in Google's GMail
 // system.
 type GmailService struct {
 	service *gmail.Service
 	limiter *rate.Limiter
+}
+
+func isChat(msg *gmail.Message) bool {
+	for _, label := range msg.LabelIds {
+		if label == "CHAT" {
+			return true
+		}
+	}
+	return false
+}
+
+func canonicalError(err error) error {
+	if err == nil {
+		return err
+	}
+
+	// Canonicalize GMail "Not Found" errors to ErrMessageNotFound.
+	//
+	// GMail sometimes uses internal (phantom) messages in a
+	// user's mailbox for somethings (calendar invites?).  These
+	// are visible in some Gmail APIs such as Users.history.list.
+	// Accordinly, we must handle 404 errors when retrieving them
+	// with Users.messages.get.
+	//
+	// More information:
+	// https://issuetracker.google.com/issues/76185867
+	// https://issuetracker.google.com/issues/118714982
+	// https://issuetracker.google.com/issues/122167541
+	//
+	// TODO: try including "messageDeleted" in the
+	// Users.history.list call, and avoiding calling
+	// Users.messages.get for those.  See
+	// https://stackoverflow.com/questions/42098553/gmail-api-returns-404-error-when-calling-message-get,
+	// which suggests that a history list call can return
+	// "messageAdded", "labelAdded" and "labelRemoved" updates for
+	// messages that are later deleted.
+	//
+	// Observation: Programs should be resilient to "Not Found"
+	// regardless.  A call to Users.history.list followed by a
+	// series of Users.messages.get calls is not an atomic
+	// operation.  A message can be deleted at any time for a
+	// variety of reasons (e.g. messages in the trash expiring,
+	// calls to Users.messages.delete).
+	//
+	// The error response JSON we're trying to match is this:
+	//
+	// {
+	//   "error": {
+	//     "errors": [
+	//       {
+	//         "domain": "global",
+	//         "reason": "notFound",
+	//         "message": "Not Found"
+	//       }
+	//     ],
+	//     "code": 404,
+	//     "message": "Not Found"
+	//   }
+	// }
+	//
+	// TODOD: Handle this more gracefully by generalizing a "not
+	// found" error in the MessageStorage interface?
+	switch err := errors.Cause(err).(type) {
+	case *googleapi.Error:
+		if err.Code == http.StatusNotFound {
+			for _, item := range err.Errors {
+				if item.Reason == "notFound" {
+					log.Printf("Warning: message not found...")
+					return ErrMessageNotFound
+				}
+			}
+		}
+	}
+	return err
 }
 
 func New(client *http.Client) (*GmailService, error) {
@@ -65,7 +144,7 @@ func (s *GmailService) ListAll(ctx context.Context, handler func(message.ID) err
 		return err
 	}
 	msgs := gmail.NewUsersMessagesService(s.service)
-	req := msgs.List("me").Q("{in:inbox} -is:chat") // XXX "in:all"
+	req := msgs.List("me").Q("-is:chat {in:inbox in:sent}") // XXX "in:all"
 	total := 0
 	err := req.Pages(ctx, func(page *gmail.ListMessagesResponse) (err error) {
 		total += len(page.Messages)
@@ -132,7 +211,11 @@ func (s *GmailService) GetMessageHeader(ctx context.Context, id string) (*messag
 	}
 	msg, err := gmail.NewUsersMessagesService(s.service).Get("me", id).
 		Context(ctx).Format("minimal").Do()
+	if err == nil && isChat(msg) {
+		err = ErrMessageNotFound
+	}
 	if err != nil {
+		err = canonicalError(err)
 		return nil, errors.Wrapf(err, "getting message %v from gmail", id)
 	}
 	m := &message.Header{ID: message.ID{PermID: msg.Id, ThreadID: msg.ThreadId},
@@ -148,7 +231,11 @@ func (s *GmailService) GetMessageFull(ctx context.Context, id string) (*message.
 	}
 	msg, err := gmail.NewUsersMessagesService(s.service).Get("me", id).
 		Context(ctx).Format("raw").Do()
+	if err == nil && isChat(msg) {
+		err = ErrMessageNotFound
+	}
 	if err != nil {
+		err = canonicalError(err)
 		return nil, errors.Wrapf(err, "getting message %v from gmail", id)
 	}
 	raw, err := base64.URLEncoding.DecodeString(msg.Raw)
