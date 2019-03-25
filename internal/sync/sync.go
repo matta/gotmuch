@@ -255,7 +255,6 @@ func isNotFound(err error) bool {
 	// found" error in the MessageStorage interface?
 	switch err := errors.Cause(err).(type) {
 	case *googleapi.Error:
-
 		if err.Code == http.StatusNotFound {
 			for _, item := range err.Errors {
 				if item.Reason == "notFound" {
