@@ -217,10 +217,6 @@ func handleUpdatedHeader(ctx context.Context, tx *persist.Tx, hdr *message.Heade
 }
 
 func isNotFound(err error) bool {
-	// Ignore "Message Not Found" errors when fetching messages.
-	//
-	// TODOD: Handle this more gracefully by generalizing a "not
-	// found" error in the MessageStorage interface?
 	return errors.Cause(err) == gmail.ErrMessageNotFound
 }
 
@@ -230,10 +226,13 @@ func handleUpdatedMessage(ctx context.Context, tx *persist.Tx, g MessageStorage,
 	if haveBody {
 		header, err := g.GetMessageHeader(ctx, id.PermID)
 		if isNotFound(err) {
-			// TODO: Treat this as a delete.  The message
-			// is no longer in Gmail, and we currently
-			// re-attempt this fetch forever.
-			return nil
+			// TODO: Treat this as a delete.  The message is no
+			// longer in Gmail.
+			//
+			// For now, ceate a fake message with a HistoryID of
+			// zero.
+			log.Printf("Warning: message not found, setting history ID of %+v to zero", id)
+			return handleUpdatedHeader(ctx, tx, &message.Header{ID: id, HistoryID: 0})
 		}
 		if err != nil {
 			return errors.Wrapf(err, "from handleUpdatedMessage")
@@ -242,13 +241,14 @@ func handleUpdatedMessage(ctx context.Context, tx *persist.Tx, g MessageStorage,
 	}
 	fullMsg, err := g.GetMessageFull(ctx, id.PermID)
 
-	// TODO: save history ID and label information here.
-
 	if isNotFound(err) {
 		// TODO: Treat this as a delete.  The message is no
-		// longer in Gmail, and we currently re-attempt this
-		// fetch forever.
-		return nil
+		// longer in Gmail.
+		//
+		// For now, ceate a fake message with a HistoryID of
+		// zero.
+		log.Printf("Warning: message not found, setting history ID of %+v to zero", id)
+		return handleUpdatedHeader(ctx, tx, &message.Header{ID: id, HistoryID: 0})
 	}
 	if err != nil {
 		return errors.Wrapf(err, "failed getting message %v", id.PermID)
