@@ -304,9 +304,9 @@ DELETE FROM message_labels WHERE account = $1 AND message_id = $2
 }
 
 func (tx *Tx) UpdateHeader(ctx context.Context, account string, hdr *message.Header) error {
-	sql := `UPDATE messages SET (history_id, size_estimate) = ($3, $4) ` +
-		`WHERE account = $1 AND message_id = $2;`
-	if err := tx.exec(ctx, sql, account, hdr.ID.PermID, hdr.HistoryID, hdr.SizeEstimate); err != nil {
+	sql := `UPDATE messages SET (history_id, size_estimate) = ($1, $2) ` +
+		`WHERE account = $3 AND message_id = $4;`
+	if err := tx.exec(ctx, sql, orderedToSigned(hdr.HistoryID), hdr.SizeEstimate, account, hdr.ID.PermID); err != nil {
 		return err
 	}
 
@@ -329,13 +329,14 @@ func (tx *Tx) UpdateHeader(ctx context.Context, account string, hdr *message.Hea
 	return nil
 }
 
-func (tx *Tx) ListUpdated(ctx context.Context, account string, handler func(message.ID) error) error {
+func (tx *Tx) ListUpdated(ctx context.Context, account string, limit int, handler func(message.ID) error) error {
 	const sql = `
 SELECT message_id, thread_id
 FROM messages
 WHERE account == $1 AND history_id IS NULL
+LIMIT $2
 `
-	rows, err := tx.query(ctx, sql, account)
+	rows, err := tx.query(ctx, sql, account, limit)
 	if err != nil {
 		return err
 	}

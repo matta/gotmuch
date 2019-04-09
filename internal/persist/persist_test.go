@@ -226,7 +226,7 @@ func (f *dbFixture) ListUpdated(ctx context.Context, account string) map[string]
 	defer RollbackOrFatal(f.t, tx)
 
 	m := map[string]message.ID{}
-	err := tx.ListUpdated(ctx, account, func(id message.ID) error {
+	err := tx.ListUpdated(ctx, account, 100, func(id message.ID) error {
 		_, ok := m[id.PermID]
 		if ok {
 			f.t.Errorf("persist.Tx.ListUpdated() returned duplicate message.ID %#v", id)

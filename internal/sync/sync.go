@@ -158,47 +158,58 @@ func pullList(ctx context.Context, g MessageStorage, db *persist.DB, nm *notmuch
 }
 
 func pullDownload(ctx context.Context, g MessageStorage, db *persist.DB, nm *notmuch.Service) error {
-	tx, err := db.Begin(ctx)
-	defer tx.Rollback()
+	const batchSize = 1000
+	count := batchSize // dummy value
+	for count == batchSize {
+		log.Print("Downloading updated messages...")
+		count = 0
 
-	grp, ctx := errgroup.WithContext(ctx)
-	ids := make(chan message.ID)
+		tx, err := db.Begin(ctx)
+		defer tx.Rollback()
 
-	grp.Go(func() error {
-		defer close(ids)
-		return tx.ListUpdated(ctx, fixmeUser, func(id message.ID) error {
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case ids <- id:
-				return nil
-			}
-		})
-	})
+		grp, ctx := errgroup.WithContext(ctx)
+		ids := make(chan message.ID)
 
-	const concurrency = 100
-	for i := 0; i < concurrency; i++ {
-		id, ok := <-ids
-		if !ok {
-			break
-		}
 		grp.Go(func() error {
-			for {
-				if err = handleUpdatedMessage(ctx, tx, g, nm, id); err != nil {
-					return errors.Wrap(err, "unable to pull message")
-				}
-				id, ok = <-ids
-				if !ok {
+			defer close(ids)
+			return tx.ListUpdated(ctx, fixmeUser, batchSize, func(id message.ID) error {
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case ids <- id:
+					count++
 					return nil
 				}
-			}
+			})
 		})
-	}
 
-	if err := grp.Wait(); err != nil {
-		return errors.Wrap(err, "unable to pull messages")
+		const concurrency = 100
+		for i := 0; i < concurrency; i++ {
+			id, ok := <-ids
+			if !ok {
+				break
+			}
+			grp.Go(func() error {
+				for {
+					if err = handleUpdatedMessage(ctx, tx, g, nm, id); err != nil {
+						return errors.Wrap(err, "unable to pull message")
+					}
+					id, ok = <-ids
+					if !ok {
+						return nil
+					}
+				}
+			})
+		}
+
+		if err := grp.Wait(); err != nil {
+			return errors.Wrap(err, "unable to pull messages")
+		}
+		if err := tx.Commit(); err != nil {
+			return errors.Wrap(err, "unable to commit transaction")
+		}
 	}
-	return tx.Commit()
+	return nil
 }
 
 func handleUpdatedHeader(ctx context.Context, tx *persist.Tx, hdr *message.Header) error {
