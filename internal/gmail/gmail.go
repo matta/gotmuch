@@ -65,71 +65,6 @@ func isChat(msg *gmail.Message) bool {
 	return false
 }
 
-func canonicalError(err error) error {
-	if err == nil {
-		return err
-	}
-
-	// Canonicalize GMail "Not Found" errors to ErrMessageNotFound.
-	//
-	// GMail sometimes uses internal (phantom) messages in a
-	// user's mailbox for somethings (calendar invites?).  These
-	// are visible in some Gmail APIs such as Users.history.list.
-	// Accordinly, we must handle 404 errors when retrieving them
-	// with Users.messages.get.
-	//
-	// More information:
-	// https://issuetracker.google.com/issues/76185867
-	// https://issuetracker.google.com/issues/118714982
-	// https://issuetracker.google.com/issues/122167541
-	//
-	// TODO: try including "messageDeleted" in the
-	// Users.history.list call, and avoiding calling
-	// Users.messages.get for those.  See
-	// https://stackoverflow.com/questions/42098553/gmail-api-returns-404-error-when-calling-message-get,
-	// which suggests that a history list call can return
-	// "messageAdded", "labelAdded" and "labelRemoved" updates for
-	// messages that are later deleted.
-	//
-	// Observation: Programs should be resilient to "Not Found"
-	// regardless.  A call to Users.history.list followed by a
-	// series of Users.messages.get calls is not an atomic
-	// operation.  A message can be deleted at any time for a
-	// variety of reasons (e.g. messages in the trash expiring,
-	// calls to Users.messages.delete).
-	//
-	// The error response JSON we're trying to match is this:
-	//
-	// {
-	//   "error": {
-	//     "errors": [
-	//       {
-	//         "domain": "global",
-	//         "reason": "notFound",
-	//         "message": "Not Found"
-	//       }
-	//     ],
-	//     "code": 404,
-	//     "message": "Not Found"
-	//   }
-	// }
-	//
-	// TODOD: Handle this more gracefully by generalizing a "not
-	// found" error in the MessageStorage interface?
-	switch err := errors.Cause(err).(type) {
-	case *googleapi.Error:
-		if err.Code == http.StatusNotFound {
-			for _, item := range err.Errors {
-				if item.Reason == "notFound" {
-					log.Printf("Warning: message not found...")
-					return ErrMessageNotFound
-				}
-			}
-		}
-	}
-	return err
-}
-
 func New(client *http.Client) (*GmailService, error) {
 	s, err := gmail.New(client)
 	if err != nil {
@@ -205,37 +140,62 @@ func (s *GmailService) ListFrom(ctx context.Context, historyID uint64, handler f
 	return err
 }
 
-func (s *GmailService) GetMessageHeader(ctx context.Context, id string) (*message.Header, error) {
-	if err := s.limiter.WaitN(ctx, quotaUnitsMessagesGet); err != nil {
+func (s *GmailService) getMessage(ctx context.Context, call *gmail.UsersMessagesGetCall) (*gmail.Message, error) {
+	for {
+		if err := s.limiter.WaitN(ctx, quotaUnitsMessagesGet); err != nil {
+			return nil, err
+		}
+		msg, err := call.Do()
+		if err == nil && isChat(msg) {
+			err = ErrMessageNotFound
+		}
+		if err == nil {
+			return msg, nil
+		}
+
+		switch cause := errors.Cause(err).(type) {
+		case *googleapi.Error:
+			if cause.Code == http.StatusTooManyRequests {
+				continue // retry
+			}
+			if cause.Code == http.StatusNotFound {
+				for _, item := range cause.Errors {
+					if item.Reason == "notFound" {
+						log.Printf("Warning: message not found...")
+						err = ErrMessageNotFound
+					}
+				}
+			}
+		}
 		return nil, err
 	}
-	msg, err := gmail.NewUsersMessagesService(s.service).Get("me", id).
-		Context(ctx).Format("minimal").Do()
-	if err == nil && isChat(msg) {
-		err = ErrMessageNotFound
+}
+
+func (s *GmailService) GetMessageHeader(ctx context.Context, id string) (*message.Header, error) {
+	for {
+		if err := s.limiter.WaitN(ctx, quotaUnitsMessagesGet); err != nil {
+			return nil, err
+		}
+		msg, err := s.getMessage(ctx, gmail.NewUsersMessagesService(s.service).Get("me", id).
+			Context(ctx).Format("minimal"))
+		if err != nil {
+			return nil, errors.Wrapf(err, "getting message %v from gmail", id)
+		}
+		m := &message.Header{ID: message.ID{PermID: msg.Id, ThreadID: msg.ThreadId},
+			LabelIDs:     msg.LabelIds,
+			HistoryID:    msg.HistoryId,
+			SizeEstimate: msg.SizeEstimate}
+		return m, nil
 	}
-	if err != nil {
-		err = canonicalError(err)
-		return nil, errors.Wrapf(err, "getting message %v from gmail", id)
-	}
-	m := &message.Header{ID: message.ID{PermID: msg.Id, ThreadID: msg.ThreadId},
-		LabelIDs:     msg.LabelIds,
-		HistoryID:    msg.HistoryId,
-		SizeEstimate: msg.SizeEstimate}
-	return m, nil
 }
 
 func (s *GmailService) GetMessageFull(ctx context.Context, id string) (*message.Body, error) {
 	if err := s.limiter.WaitN(ctx, quotaUnitsMessagesGet); err != nil {
 		return nil, err
 	}
-	msg, err := gmail.NewUsersMessagesService(s.service).Get("me", id).
-		Context(ctx).Format("raw").Do()
-	if err == nil && isChat(msg) {
-		err = ErrMessageNotFound
-	}
+	msg, err := s.getMessage(ctx, gmail.NewUsersMessagesService(s.service).Get("me", id).
+		Context(ctx).Format("raw"))
 	if err != nil {
-		err = canonicalError(err)
 		return nil, errors.Wrapf(err, "getting message %v from gmail", id)
 	}
 	raw, err := base64.URLEncoding.DecodeString(msg.Raw)
