@@ -18,12 +18,13 @@ import (
 	"context"
 	"fmt"
 	"io/ioutil"
-	"marmstrong/gotmuch/internal/message"
 	"math"
 	"net/url"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/matta/gotmuch/internal/message"
 
 	"github.com/google/go-cmp/cmp"
 	_ "github.com/mattn/go-sqlite3"
