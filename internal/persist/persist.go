@@ -23,7 +23,7 @@ import (
 	"strings"
 	"time"
 
-	"marmstrong/gotmuch/internal/message"
+	"github.com/matta/gotmuch/internal/message"
 
 	"github.com/pkg/errors"
 )

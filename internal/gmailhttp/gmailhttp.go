@@ -37,7 +37,7 @@ import (
 	"strings"
 	"time"
 
-	"marmstrong/gotmuch/internal/gmail"
+	"github.com/matta/gotmuch/internal/gmail"
 
 	"github.com/pkg/errors"
 	"golang.org/x/oauth2"

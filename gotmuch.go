@@ -21,13 +21,13 @@ import (
 	"os"
 	"path/filepath"
 
-	"marmstrong/gotmuch/internal/gmail"
-	"marmstrong/gotmuch/internal/gmailhttp"
-	"marmstrong/gotmuch/internal/homedir"
-	"marmstrong/gotmuch/internal/notmuch"
-	"marmstrong/gotmuch/internal/persist"
-	"marmstrong/gotmuch/internal/sync"
-	"marmstrong/gotmuch/internal/tracehttp"
+	"github.com/matta/gotmuch/internal/gmail"
+	"github.com/matta/gotmuch/internal/gmailhttp"
+	"github.com/matta/gotmuch/internal/homedir"
+	"github.com/matta/gotmuch/internal/notmuch"
+	"github.com/matta/gotmuch/internal/persist"
+	"github.com/matta/gotmuch/internal/sync"
+	"github.com/matta/gotmuch/internal/tracehttp"
 
 	"github.com/pkg/errors"
 

@@ -20,10 +20,10 @@ import (
 	"log"
 	"os"
 
-	"marmstrong/gotmuch/internal/gmail"
-	"marmstrong/gotmuch/internal/message"
-	"marmstrong/gotmuch/internal/notmuch"
-	"marmstrong/gotmuch/internal/persist"
+	"github.com/matta/gotmuch/internal/gmail"
+	"github.com/matta/gotmuch/internal/message"
+	"github.com/matta/gotmuch/internal/notmuch"
+	"github.com/matta/gotmuch/internal/persist"
 
 	"github.com/pkg/errors"
 	"golang.org/x/sync/errgroup"

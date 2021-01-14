@@ -20,7 +20,7 @@ import (
 	"log"
 	"net/http"
 
-	"marmstrong/gotmuch/internal/message"
+	"github.com/matta/gotmuch/internal/message"
 
 	"github.com/pkg/errors"
 	"golang.org/x/time/rate"
@@ -28,8 +28,6 @@ import (
 	gmail_api "google.golang.org/api/gmail/v1"
 	"google.golang.org/api/googleapi"
 )
-
-// "google3/util/time/go/rate"
 
 const (
 	ReadonlyScope = gmail_api.GmailReadonlyScope
