@@ -1,3 +1,4 @@
+// Copyright 2021 Matt Armstrong
 // Copyright 2019 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,114 +16,102 @@
 /*
 Pakage gmailhttp implements an HTTP client for gmail.
 
-OAuth2.0 tokens are acquired by running an external program.  The
-program shoud behave identically to the one used by
-https://github.com/google/oauth2l (see
-https://github.com/google/oauth2l/blob/abeb08f278e7973101d881b5d962055bf52f3950/util/sso.go#L24).
-
 BUGS:
 
 Token expiry may not be be handled properly.
-
 */
 package gmailhttp
 
 import (
-	"bytes"
+	"context"
+	"encoding/json"
 	"fmt"
+	"io/ioutil"
+	"log"
 	"net/http"
-	"net/mail"
 	"os"
-	"os/exec"
-	"strings"
-	"time"
+	"path/filepath"
 
-	"github.com/matta/gotmuch/internal/gmail"
-
-	"github.com/pkg/errors"
+	"github.com/matta/gotmuch/internal/homedir"
 	"golang.org/x/oauth2"
-	"google.golang.org/api/googleapi/transport"
+	"golang.org/x/oauth2/google"
+	"google.golang.org/api/gmail/v1"
 )
 
-// ssoTokenSource encodes the information required to run an external
-// program to retrieve an OAuth 2.0 bearer token for a given user and
-// set of scopes.
-type ssoTokenSource struct {
-	// The sso command name.
-	sso string
-
-	// The user name to authenticate.
-	user string
-
-	// The scope (space separated) to authenticate.
-	//
-	// TODO: make this a slice
-	scope string
-}
-
-// Token returns a new token for the specified user and scopes by
-// executing the specified external program.  Satisfies
-// oauth2.TokenSource.
-func (s *ssoTokenSource) Token() (*oauth2.Token, error) {
-	cmd := exec.Command(s.sso, s.user, s.scope)
-
-	var out bytes.Buffer
-	cmd.Stdout = &out
-	err := cmd.Run()
+// Retrieves a token from a local file.
+func tokenFromFile(file string) (*oauth2.Token, error) {
+	f, err := os.Open(file)
 	if err != nil {
 		return nil, err
 	}
+	defer f.Close()
+	tok := &oauth2.Token{}
+	err = json.NewDecoder(f).Decode(tok)
+	return tok, err
+}
 
-	accessToken := out.String()
+// Request a token from the web, then returns the retrieved token.
+func getTokenFromWeb(config *oauth2.Config) *oauth2.Token {
+	authURL := config.AuthCodeURL("state-token", oauth2.AccessTypeOffline)
+	fmt.Printf("Go to the following link in your browser then type the "+
+		"authorization code: \n%v\n", authURL)
 
-	return &oauth2.Token{
-		AccessToken: accessToken,
-		// TODO: figure out a good solution for token
-		// expiration.  The pair of oauth2.ReuseTokenSource
-		// and oauth2.Transport is insufficient because there
-		// is no code to handle token invalidation done by the
-		// server.  To mitigate that we re-fetch a token every
-		// 5 minutes, but this will be insufficient if the
-		// token is ever cached.
-		Expiry: time.Now().Add(time.Minute * 5),
-	}, nil
+	var authCode string
+	if _, err := fmt.Scan(&authCode); err != nil {
+		log.Fatalf("Unable to read authorization code: %v", err)
+	}
+
+	tok, err := config.Exchange(context.TODO(), authCode)
+	if err != nil {
+		log.Fatalf("Unable to retrieve token from web: %v", err)
+	}
+
+	// TODO: verify that the correct gmail user authorized.
+
+	return tok
+}
+
+// Saves a token to a file path.
+func saveToken(path string, token *oauth2.Token) {
+	// TODO: integrate this IO with the persist package.
+	fmt.Printf("Saving credential file to: %s\n", path)
+	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0600)
+	if err != nil {
+		log.Fatalf("Unable to cache oauth token: %v", err)
+	}
+	defer f.Close()
+	json.NewEncoder(f).Encode(token)
+}
+
+// Retrieve a token, saves the token, then returns the generated client.
+func getClient(config *oauth2.Config) *http.Client {
+	// The file token.json stores the user's access and refresh tokens, and is
+	// created automatically when the authorization flow completes for the first
+	// time.
+	// TODO: integrate this IO with the persist package.
+	tokFile := "token.json"
+	tok, err := tokenFromFile(tokFile)
+	if err != nil {
+		tok = getTokenFromWeb(config)
+		saveToken(tokFile, tok)
+	}
+	return config.Client(context.Background(), tok)
 }
 
 // New returns a new HTTP client capable of using the GMail API.
 func New() (*http.Client, error) {
-	user, ok := os.LookupEnv("GOTMUCH_USER")
-	if !ok {
-		return nil, errors.New("GOTMUCH_USER environment must be set")
-	}
-	addr, err := mail.ParseAddress(user)
+	// TODO: integrate this IO with the persist package.
+	name := filepath.Join(homedir.Get(), "gotmuch-credentials.json")
+	bytes, err := ioutil.ReadFile(name)
 	if err != nil {
-		return nil, errors.Wrapf(err, "GOTMUCH_USER fails to parse as an email address: %q", user)
-	}
-	login := addr.Address
-	if !strings.ContainsRune(login, '@') {
-		return nil, fmt.Errorf("GOTMUCH_USER must contain a hostname: %q", login)
+		return nil, err
 	}
 
-	sso, ok := os.LookupEnv("GOTMUCH_SSO")
-	if !ok {
-		return nil, errors.New("GOTMUCH_SSO environment variable must be set")
+	// If modifying these scopes, delete your previously saved token.json.
+	config, err := google.ConfigFromJSON(bytes, gmail.GmailReadonlyScope)
+	if err != nil {
+		log.Fatalf("Unable to parse client secret file to config: %v", err)
 	}
 
-	src := &ssoTokenSource{
-		sso:   sso,
-		user:  login,
-		scope: gmail.ReadonlyScope,
-	}
-
-	trans := &oauth2.Transport{Source: oauth2.ReuseTokenSource(nil, src)}
-
-	apiKey, ok := os.LookupEnv("GOTMUCH_API_KEY")
-	if ok {
-		// This API key is generated from the Google Developer
-		// Console: API & Auth -> APIs -> Credentials -> Add
-		// Credentials.  Type=Server.
-		trans.Base = &transport.APIKey{Key: apiKey}
-	}
-
-	return &http.Client{Transport: trans}, nil
+	return getClient(config), nil
 }
