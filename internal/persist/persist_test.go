@@ -1,3 +1,4 @@
+// Copyright 2022 Matt Armtrong
 // Copyright 2019 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -49,6 +50,30 @@ func TestOrdered(t *testing.T) {
 			t.Errorf("orderedToUnsigned(%x) = %x, want %x", tc.s, u, tc.u)
 		}
 	}
+}
+
+func FuzzOrdered(f *testing.F) {
+	cases := []uint64{
+		0, 1, 2, 3, 4, 5, 6, 7, math.MaxInt64 - 1, math.MaxInt64, math.MaxInt64 + 1,
+		math.MaxUint64 - 1, math.MaxUint64}
+	for _, u := range cases {
+		for _, inc := range cases {
+			f.Add(u, inc)
+		}
+	}
+	f.Fuzz(func(t *testing.T, u uint64, inc uint64) {
+		s := orderedToSigned(u)
+		if u != orderedToUnsigned(s) {
+			t.Errorf("round trip failure %x -> %x -> %x",
+				u, s, orderedToUnsigned(s))
+		}
+		uinc := u + inc
+		sinc := orderedToSigned(uinc)
+		if (u < uinc) != (s < sinc) {
+			t.Errorf("order inversion: (%x < %x) != (%x < %x)",
+				u, uinc, s, sinc)
+		}
+	})
 }
 
 func TestDSN(t *testing.T) {
