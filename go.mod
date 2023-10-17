@@ -3,7 +3,7 @@ module github.com/matta/gotmuch
 go 1.21
 
 require (
-	github.com/google/go-cmp v0.5.9
+	github.com/google/go-cmp v0.6.0
 	github.com/mattn/go-sqlite3 v1.14.17
 	github.com/pkg/errors v0.9.1
 	golang.org/x/oauth2 v0.12.0
