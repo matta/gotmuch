@@ -7,7 +7,7 @@ require (
 	github.com/mattn/go-sqlite3 v1.14.17
 	github.com/pkg/errors v0.9.1
 	golang.org/x/oauth2 v0.13.0
-	golang.org/x/sync v0.3.0
+	golang.org/x/sync v0.4.0
 	golang.org/x/time v0.3.0
 	google.golang.org/api v0.140.0
 )
