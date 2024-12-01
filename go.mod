@@ -6,7 +6,7 @@ require (
 	github.com/google/go-cmp v0.6.0
 	github.com/mattn/go-sqlite3 v1.14.22
 	github.com/pkg/errors v0.9.1
-	golang.org/x/oauth2 v0.22.0
+	golang.org/x/oauth2 v0.24.0
 	golang.org/x/sync v0.8.0
 	golang.org/x/time v0.6.0
 	google.golang.org/api v0.195.0
